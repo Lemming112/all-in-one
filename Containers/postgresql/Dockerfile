@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:latest
-# From https://github.com/docker-library/postgres/blob/master/17/alpine3.22/Dockerfile
-FROM postgres:17.7-alpine
+# From https://github.com/docker-library/postgres/blob/master/18/alpine3.23/Dockerfile
+FROM postgres:18.4-alpine
+
+ENV PGDATA=/var/lib/postgresql/data
 
 COPY --chmod=775 start.sh /start.sh
 COPY --chmod=775 healthcheck.sh /healthcheck.sh
@@ -12,6 +14,7 @@ RUN set -ex; \
         bash \
         openssl \
         shadow \
+        netcat-openbsd \
         grep; \
     \
 # We need to use the same gid and uid as on old installations
@@ -22,6 +25,7 @@ RUN set -ex; \
     apk del --no-cache shadow; \
     \
 # Fix default permissions
+    mkdir -p /var/lib/postgresql/data; \
     chown -R postgres:postgres /var/lib/postgresql; \
     chown -R postgres:postgres /var/run/postgresql; \
     chmod -R 777 /var/run/postgresql; \
@@ -44,4 +48,10 @@ ENTRYPOINT ["/start.sh"]
 
 HEALTHCHECK CMD /healthcheck.sh
 LABEL com.centurylinklabs.watchtower.enable="false" \
-    org.label-schema.vendor="Nextcloud"
+    wud.watch="false" \
+    org.opencontainers.image.title="PostgreSQL for Nextcloud AIO" \
+    org.opencontainers.image.description="PostgreSQL database for Nextcloud All-in-One" \
+    org.opencontainers.image.url="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.source="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.vendor="Nextcloud" \
+    org.opencontainers.image.documentation="https://github.com/nextcloud/all-in-one/blob/main/readme.md"

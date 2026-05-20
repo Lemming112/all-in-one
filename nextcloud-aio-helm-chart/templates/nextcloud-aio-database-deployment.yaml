@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    kompose.version: 1.37.0 (fb0539e64)
+    kompose.version: 1.38.0 (a8f5d1cbd)
   labels:
     io.kompose.service: nextcloud-aio-database
   name: nextcloud-aio-database
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        kompose.version: 1.37.0 (fb0539e64)
+        kompose.version: 1.38.0 (a8f5d1cbd)
       labels:
         io.kompose.service: nextcloud-aio-database
     spec:
@@ -35,7 +35,7 @@ spec:
         {{- end }}
       initContainers:
         - name: init-subpath
-          image: ghcr.io/nextcloud-releases/aio-alpine:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-alpine:20260515_145717
           command:
             - mkdir
             - "-p"
@@ -54,6 +54,8 @@ spec:
               {{- end }}
       containers:
         - env:
+            - name: AIO_LOG_LEVEL
+              value: "{{ .Values.AIO_LOG_LEVEL }}"
             - name: PGTZ
               value: "{{ .Values.TIMEZONE }}"
             - name: POSTGRES_DB
@@ -64,7 +66,7 @@ spec:
               value: nextcloud
             - name: TZ
               value: "{{ .Values.TIMEZONE }}"
-          image: ghcr.io/nextcloud-releases/aio-postgresql:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-postgresql:20260515_145717
           readinessProbe:
             exec:
               command:

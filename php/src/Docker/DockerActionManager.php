@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 namespace AIO\Docker;
 
@@ -36,15 +37,15 @@ readonly class DockerActionManager {
     }
 
     private function BuildImageName(Container $container): string {
-        $tag = $container->GetImageTag();
+        $tag = $container->imageTag;
         if ($tag === '%AIO_CHANNEL%') {
             $tag = $this->GetCurrentChannel();
         }
-        return $container->GetContainerName() . ':' . $tag;
+        return $container->containerName . ':' . $tag;
     }
 
     public function GetContainerRunningState(Container $container): ContainerState {
-        $url = $this->BuildApiUrl(sprintf('containers/%s/json', urlencode($container->GetIdentifier())));
+        $url = $this->BuildApiUrl(sprintf('containers/%s/json', urlencode($container->identifier)));
         try {
             $response = $this->guzzleClient->get($url);
         } catch (RequestException $e) {
@@ -64,7 +65,7 @@ readonly class DockerActionManager {
     }
 
     public function GetContainerRestartingState(Container $container): ContainerState {
-        $url = $this->BuildApiUrl(sprintf('containers/%s/json', urlencode($container->GetIdentifier())));
+        $url = $this->BuildApiUrl(sprintf('containers/%s/json', urlencode($container->identifier)));
         try {
             $response = $this->guzzleClient->get($url);
         } catch (RequestException $e) {
@@ -84,16 +85,16 @@ readonly class DockerActionManager {
     }
 
     public function GetContainerUpdateState(Container $container): VersionState {
-        $tag = $container->GetImageTag();
+        $tag = $container->imageTag;
         if ($tag === '%AIO_CHANNEL%') {
             $tag = $this->GetCurrentChannel();
         }
 
-        $runningDigests = $this->GetRepoDigestsOfContainer($container->GetIdentifier());
+        $runningDigests = $this->GetRepoDigestsOfContainer($container->identifier);
         if ($runningDigests === null) {
             return VersionState::Different;
         }
-        $remoteDigest = $this->GetLatestDigestOfTag($container->GetContainerName(), $tag);
+        $remoteDigest = $this->GetLatestDigestOfTag($container->containerName, $tag);
         if ($remoteDigest === null) {
             return VersionState::Equal;
         }
@@ -112,12 +113,12 @@ readonly class DockerActionManager {
             return $runningState;
         }
 
-        $containerName = $container->GetIdentifier();
-        $internalPort = $container->GetInternalPort();
+        $containerName = $container->identifier;
+        $internalPort = $container->internalPorts;
         if ($internalPort === '%APACHE_PORT%') {
-            $internalPort = $this->configurationManager->GetApachePort();
+            $internalPort = $this->configurationManager->apachePort;
         } elseif ($internalPort === '%TALK_PORT%') {
-            $internalPort = $this->configurationManager->GetTalkPort();
+            $internalPort = $this->configurationManager->talkPort;
         }
 
         if ($internalPort !== "" && $internalPort !== 'host') {
@@ -134,7 +135,7 @@ readonly class DockerActionManager {
     }
 
     public function DeleteContainer(Container $container): void {
-        $url = $this->BuildApiUrl(sprintf('containers/%s?v=true', urlencode($container->GetIdentifier())));
+        $url = $this->BuildApiUrl(sprintf('containers/%s?v=true', urlencode($container->identifier)));
         try {
             $this->guzzleClient->delete($url);
         } catch (RequestException $e) {
@@ -144,45 +145,71 @@ readonly class DockerActionManager {
         }
     }
 
-    public function GetLogs(string $id): string {
+    public function deleteBorgBackupConfig(): void {
+        // Delete the borgbackup container
+        $id = 'nextcloud-aio-borgbackup';
+        $borgbackupContainer = $this->containerDefinitionFetcher->GetContainerById($id);
+        $this->DeleteContainer($borgbackupContainer);
+
+        // Delete the borg cache volume
+        $url = $this->BuildApiUrl('volumes/nextcloud_aio_backup_cache');
+        try {
+            $this->guzzleClient->delete($url);
+            error_log('nextcloud_aio_backup_cache volume deleted successfully.');
+        } catch (RequestException $e) {
+            if ($e->getCode() !== 404) {
+                error_log('Could not delete nextcloud_aio_backup_cache volume: ' . $e->getMessage());
+            }
+        }
+
+        // Clear the configuration variables and files
+        $this->configurationManager->deleteBorgBackupLocationItems();
+    }
+
+    public function GetLogs(string $id, string $since = ''): string {
         $url = $this->BuildApiUrl(
             sprintf(
-                'containers/%s/logs?stdout=true&stderr=true&timestamps=true',
-                urlencode($id)
+                'containers/%s/logs?stdout=true&stderr=true&timestamps=true&since=%s',
+                urlencode($id),
+                $since
             ));
         $responseBody = (string)$this->guzzleClient->get($url)->getBody();
 
         $response = "";
         $separator = "\r\n";
         $line = strtok($responseBody, $separator);
-        $response = substr((string)$line, 8) . $separator;
+        if ($line !== false) {
+            $response = substr($line, 8) . $separator;
+        }
 
-        while ($line !== false) {
-            $line = strtok($separator);
-            $response .= substr((string)$line, 8) . $separator;
+        while (($line = strtok($separator)) !== false) {
+            $response .= substr($line, 8) . $separator;
         }
 
         return $response;
     }
 
-    public function StartContainer(Container $container): void {
-        $url = $this->BuildApiUrl(sprintf('containers/%s/start', urlencode($container->GetIdentifier())));
+    public function StartContainer(Container $container, ?\Closure $addToStreamingResponseBody = null): void {
+        $url = $this->BuildApiUrl(sprintf('containers/%s/start', urlencode($container->identifier)));
         try {
+            if ($addToStreamingResponseBody !== null) {
+                $addToStreamingResponseBody($container, "Starting container");
+            }
             $this->guzzleClient->post($url);
         } catch (RequestException $e) {
-            throw new \Exception("Could not start container " . $container->GetIdentifier() . ": " . $e->getResponse()?->getBody()->getContents());
+            throw new \Exception("Could not start container " . $container->identifier . ": " . $e->getResponse()?->getBody()->getContents());
         }
     }
 
     public function CreateVolumes(Container $container): void {
         $url = $this->BuildApiUrl('volumes/create');
-        foreach ($container->GetVolumes()->GetVolumes() as $volume) {
+        foreach ($container->volumes->GetVolumes() as $volume) {
             $forbiddenChars = [
                 '/',
             ];
 
             if ($volume->name === 'nextcloud_aio_nextcloud_datadir' || $volume->name === 'nextcloud_aio_backupdir') {
-                return;
+                continue;
             }
 
             $firstChar = substr($volume->name, 0, 1);
@@ -202,10 +229,10 @@ readonly class DockerActionManager {
 
     public function CreateContainer(Container $container): void {
         $volumes = [];
-        foreach ($container->GetVolumes()->GetVolumes() as $volume) {
+        foreach ($container->volumes->GetVolumes() as $volume) {
             // // NEXTCLOUD_MOUNT gets added via bind-mount later on
-            // if ($container->GetIdentifier() === 'nextcloud-aio-nextcloud') {
-            //     if ($volume->name === $this->configurationManager->GetNextcloudMount()) {
+            // if ($container->identifier === 'nextcloud-aio-nextcloud') {
+            //     if ($volume->name === $this->configurationManager->nextcloudMount) {
             //         continue;
             //     }
             // }
@@ -228,46 +255,38 @@ readonly class DockerActionManager {
             $requestBody['HostConfig']['Binds'] = $volumes;
         }
 
-        $aioVariables = $container->GetAioVariables()->GetVariables();
-        foreach ($aioVariables as $variable) {
-            $config = $this->configurationManager->GetConfig();
-            $variable = $this->replaceEnvPlaceholders($variable);
-            $variableArray = explode('=', $variable);
-            $config[$variableArray[0]] = $variableArray[1];
-            $this->configurationManager->WriteConfig($config);
-            sleep(1);
-        }
+        $this->configurationManager->setAioVariables($container->aioVariables->GetVariables());
 
-        $envs = $container->GetEnvironmentVariables()->GetVariables();
+        $envs = $container->containerEnvironmentVariables->GetVariables();
         // Special thing for the nextcloud container
-        if ($container->GetIdentifier() === 'nextcloud-aio-nextcloud') {
+        if ($container->identifier === 'nextcloud-aio-nextcloud') {
             $envs[] = $this->GetAllNextcloudExecCommands();
         }
         foreach ($envs as $key => $env) {
-            $envs[$key] = $this->replaceEnvPlaceholders($env);
+            $envs[$key] = $this->configurationManager->replaceEnvPlaceholders($env);
         }
 
         if (count($envs) > 0) {
             $requestBody['Env'] = $envs;
         }
 
-        $requestBody['HostConfig']['RestartPolicy']['Name'] = $container->GetRestartPolicy();
+        $requestBody['HostConfig']['RestartPolicy']['Name'] = $container->restartPolicy;
 
-        $requestBody['HostConfig']['ReadonlyRootfs'] = $container->GetReadOnlySetting();
+        $requestBody['HostConfig']['ReadonlyRootfs'] = $container->readOnlyRootFs;
 
         $exposedPorts = [];
-        if ($container->GetInternalPort() !== 'host') {
-            foreach ($container->GetPorts()->GetPorts() as $value) {
+        if ($container->internalPorts !== 'host') {
+            foreach ($container->ports->GetPorts() as $value) {
                 $port = $value->port;
                 $protocol = $value->protocol;
                 if ($port === '%APACHE_PORT%') {
-                    $port = $this->configurationManager->GetApachePort();
+                    $port = $this->configurationManager->apachePort;
                     // Do not expose udp if AIO is in reverse proxy mode
                     if ($port !== '443' && $protocol === 'udp') {
                         continue;
                     }
                 } else if ($port === '%TALK_PORT%') {
-                    $port = $this->configurationManager->GetTalkPort();
+                    $port = $this->configurationManager->talkPort;
                 }
                 $portWithProtocol = $port . '/' . $protocol;
                 $exposedPorts[$portWithProtocol] = null;
@@ -279,17 +298,17 @@ readonly class DockerActionManager {
 
         if (count($exposedPorts) > 0) {
             $requestBody['ExposedPorts'] = $exposedPorts;
-            foreach ($container->GetPorts()->GetPorts() as $value) {
+            foreach ($container->ports->GetPorts() as $value) {
                 $port = $value->port;
                 $protocol = $value->protocol;
                 if ($port === '%APACHE_PORT%') {
-                    $port = $this->configurationManager->GetApachePort();
+                    $port = $this->configurationManager->apachePort;
                     // Do not expose udp if AIO is in reverse proxy mode
                     if ($port !== '443' && $protocol === 'udp') {
                         continue;
                     }
                 } else if ($port === '%TALK_PORT%') {
-                    $port = $this->configurationManager->GetTalkPort();
+                    $port = $this->configurationManager->talkPort;
                     // Skip publishing talk tcp port if it is set to 443
                     if ($port === '443' && $protocol === 'tcp') {
                         continue;
@@ -297,7 +316,7 @@ readonly class DockerActionManager {
                 }
                 $ipBinding = $value->ipBinding;
                 if ($ipBinding === '%APACHE_IP_BINDING%') {
-                    $ipBinding = $this->configurationManager->GetApacheIPBinding();
+                    $ipBinding = $this->configurationManager->apacheIpBinding;
                     // Do not expose if AIO is in internal network mode
                     if ($ipBinding === '@INTERNAL') {
                         continue;
@@ -314,18 +333,32 @@ readonly class DockerActionManager {
         }
 
         $devices = [];
-        foreach ($container->GetDevices() as $device) {
-            if ($device === '/dev/dri' && !$this->configurationManager->isDriDeviceEnabled()) {
+        $groupAdd = [];
+        foreach ($container->devices as $device) {
+            if ($device === '/dev/dri' && !$this->configurationManager->nextcloudEnableDriDevice) {
                 continue;
             }
             $devices[] = ["PathOnHost" => $device, "PathInContainer" => $device, "CgroupPermissions" => "rwm"];
+            if ($device === '/dev/dri') {
+                // Add the render device's group as a supplemental group so that non-root
+                // containers (e.g. nextcloud-aio-talk-recording) can access the device.
+                // The GID is detected during mastercontainer startup when /dev/dri is bind-mounted.
+                $gid = $this->configurationManager->driDeviceGid;
+                if ($gid !== '' && !in_array($gid, $groupAdd, true)) {
+                    $groupAdd[] = $gid;
+                }
+            }
         }
 
         if (count($devices) > 0) {
             $requestBody['HostConfig']['Devices'] = $devices;
         }
 
-        if ($container->isNvidiaGpuEnabled() && $this->configurationManager->isNvidiaGpuEnabled()) {
+        if (count($groupAdd) > 0) {
+            $requestBody['HostConfig']['GroupAdd'] = $groupAdd;
+        }
+
+        if ($container->enableNvidiaGpu && $this->configurationManager->enableNvidiaGpu) {
             $requestBody['HostConfig']['Runtime'] = 'nvidia';
             $requestBody['HostConfig']['DeviceRequests'] = [
                 [
@@ -336,13 +369,13 @@ readonly class DockerActionManager {
             ];
         }
 
-        $shmSize = $container->GetShmSize();
+        $shmSize = $container->shmSize;
         if ($shmSize > 0) {
             $requestBody['HostConfig']['ShmSize'] = $shmSize;
         }
 
         $tmpfs = [];
-        foreach ($container->GetTmpfs() as $tmp) {
+        foreach ($container->tmpfs as $tmp) {
             $mode = "";
             if (str_contains($tmp, ':')) {
                 $mode = explode(':', $tmp)[1];
@@ -354,9 +387,14 @@ readonly class DockerActionManager {
             $requestBody['HostConfig']['Tmpfs'] = $tmpfs;
         }
 
-        $requestBody['HostConfig']['Init'] = $container->GetInit();
+        $requestBody['HostConfig']['Init'] = $container->init;
 
-        $capAdds = $container->GetCapAdds();
+        $maxShutDownTime = $container->maxShutdownTime;
+        if ($maxShutDownTime > 0) {
+            $requestBody['StopTimeout'] = $maxShutDownTime;
+        }
+
+        $capAdds = $container->capAdd;
         if (count($capAdds) > 0) {
             $requestBody['HostConfig']['CapAdd'] = $capAdds;
         }
@@ -368,14 +406,14 @@ readonly class DockerActionManager {
 
         // Disable SELinux for AIO containers so that it does not break them
         $requestBody['HostConfig']['SecurityOpt'] = ["label:disable"];
-        if ($container->isApparmorUnconfined()) {
+        if ($container->apparmorUnconfined) {
             $requestBody['HostConfig']['SecurityOpt'] = ["apparmor:unconfined", "label:disable"];
         }
 
         $mounts = [];
 
         // Special things for the backup container which should not be exposed in the containers.json
-        if (str_starts_with($container->GetIdentifier(), 'nextcloud-aio-borgbackup')) {
+        if (str_starts_with($container->identifier, 'nextcloud-aio-borgbackup')) {
             // Additional backup directories
             foreach ($this->getAllBackupVolumes() as $additionalBackupVolumes) {
                 if ($additionalBackupVolumes !== '') {
@@ -384,9 +422,9 @@ readonly class DockerActionManager {
             }
 
             // Make volumes read only in case of borgbackup container. The viewer makes them writeable
-            $isReadOnly = $container->GetIdentifier() === 'nextcloud-aio-borgbackup';
+            $isReadOnly = $container->identifier === 'nextcloud-aio-borgbackup';
 
-            foreach ($this->configurationManager->GetAdditionalBackupDirectoriesArray() as $additionalBackupDirectories) {
+            foreach ($this->configurationManager->getAdditionalBackupDirectoriesArray() as $additionalBackupDirectories) {
                 if ($additionalBackupDirectories !== '') {
                     if (!str_starts_with($additionalBackupDirectories, '/')) {
                         $mounts[] = ["Type" => "volume", "Source" => $additionalBackupDirectories, "Target" => "/docker_volumes/" . $additionalBackupDirectories, "ReadOnly" => $isReadOnly];
@@ -397,33 +435,46 @@ readonly class DockerActionManager {
             }
 
         // Special things for the talk container which should not be exposed in the containers.json
-        } elseif ($container->GetIdentifier() === 'nextcloud-aio-talk') {
+        } elseif ($container->identifier === 'nextcloud-aio-talk') {
             // This is needed due to a bug in libwebsockets used in Janus which cannot handle unlimited ulimits
             $requestBody['HostConfig']['Ulimits'] = [["Name" => "nofile", "Hard" => 200000, "Soft" => 200000]];
             // // Special things for the nextcloud container which should not be exposed in the containers.json
-            // } elseif ($container->GetIdentifier() === 'nextcloud-aio-nextcloud') {
-            //     foreach ($container->GetVolumes()->GetVolumes() as $volume) {
-            //         if ($volume->name !== $this->configurationManager->GetNextcloudMount()) {
+            // } elseif ($container->identifier === 'nextcloud-aio-nextcloud') {
+            //     foreach ($container->volumes->GetVolumes() as $volume) {
+            //         if ($volume->name !== $this->configurationManager->nextcloudMount) {
             //             continue;
             //         }
             //         $mounts[] = ["Type" => "bind", "Source" => $volume->name, "Target" => $volume->mountPoint, "ReadOnly" => !$volume->isWritable, "BindOptions" => [ "Propagation" => "rshared"]];
             //     }
 
+        // Special things for the jellyfin community container
+        } elseif ($container->identifier === 'nextcloud-aio-jellyfin') {
+            $lldapIp = gethostbyname('nextcloud-aio-lldap');
+            if ($lldapIp !== 'nextcloud-aio-lldap') {
+                $requestBody['HostConfig']['ExtraHosts'] = ['nextcloud-aio-lldap:' . $lldapIp];
+            }
+
         // Special things for the caddy community container
-        } elseif ($container->GetIdentifier() === 'nextcloud-aio-caddy') {
+        } elseif ($container->identifier === 'nextcloud-aio-caddy') {
             $requestBody['HostConfig']['ExtraHosts'] = ['host.docker.internal:host-gateway'];
 
         // Special things for the collabora container which should not be exposed in the containers.json
-        } elseif ($container->GetIdentifier() === 'nextcloud-aio-collabora') {
-            if (!$this->configurationManager->isSeccompDisabled()) {
+        } elseif ($container->identifier === 'nextcloud-aio-collabora') {
+            if (!$this->configurationManager->collaboraSeccompDisabled) {
                 // Load reference seccomp profile for collabora
                 $seccompProfile = (string)file_get_contents(DataConst::GetCollaboraSeccompProfilePath());
                 $requestBody['HostConfig']['SecurityOpt'] = ["label:disable", "seccomp=$seccompProfile"];
             }
 
             // Additional Collabora options
-            if ($this->configurationManager->GetAdditionalCollaboraOptions() !== '') {
-                $requestBody['Cmd'] = [$this->configurationManager->GetAdditionalCollaboraOptions()];
+            if ($this->configurationManager->collaboraAdditionalOptions !== '') {
+                // Split the list of Collabora options, which are stored as a string but must be assigned as an array.
+                // To avoid problems with whitespace or dashes in option arguments we use a regular expression
+                // that splits the string at every position where a whitespace is followed by '--o:'.
+                // The leading whitespace is removed in the split but the following characters are not.
+                // Example: "--o:example_config1='some thing' --o:example_config2=something-else" -> ["--o:example_config1='some thing'", "--o:example_config2=something-else"] 
+                $regEx = '/\s+(?=--o:)/';
+                $requestBody['Cmd'] = preg_split($regEx, rtrim($this->configurationManager->collaboraAdditionalOptions));
             }
         }
 
@@ -434,12 +485,12 @@ readonly class DockerActionManager {
         // All AIO-managed containers should not be updated externally via watchtower but gracefully by AIO's backup and update feature.
         // Also DIUN should not send update notifications. See https://crazymax.dev/diun/providers/docker/#docker-labels 
         // Additionally set a default org.label-schema.vendor and com.docker.compose.project
-        $requestBody['Labels'] = ["com.centurylinklabs.watchtower.enable" => "false", "diun.enable" => "false", "org.label-schema.vendor" => "Nextcloud", "com.docker.compose.project" => "nextcloud-aio"];
+        $requestBody['Labels'] = ["com.centurylinklabs.watchtower.enable" => "false", "wud.watch" => "false", "diun.enable" => "false", "org.label-schema.vendor" => "Nextcloud", "com.docker.compose.project" => "nextcloud-aio"];
 
         // Containers should have a fixed host name. See https://github.com/nextcloud/all-in-one/discussions/6589
-        $requestBody['Hostname'] = $container->GetIdentifier();
+        $requestBody['Hostname'] = $container->identifier;
 
-        $url = $this->BuildApiUrl('containers/create?name=' . $container->GetIdentifier());
+        $url = $this->BuildApiUrl('containers/create?name=' . $container->identifier);
         try {
             $this->guzzleClient->request(
                 'POST',
@@ -449,18 +500,18 @@ readonly class DockerActionManager {
                 ]
             );
         } catch (RequestException $e) {
-            throw new \Exception("Could not create container " . $container->GetIdentifier() . ": " . $e->getResponse()?->getBody()->getContents());
+            throw new \Exception("Could not create container " . $container->identifier . ": " . $e->getResponse()?->getBody()->getContents());
         }
 
     }
 
     public function isRegistryReachable(Container $container): bool {
-        $tag = $container->GetImageTag();
+        $tag = $container->imageTag;
         if ($tag === '%AIO_CHANNEL%') {
             $tag = $this->GetCurrentChannel();
         }
 
-        $remoteDigest = $this->GetLatestDigestOfTag($container->GetContainerName(), $tag);
+        $remoteDigest = $this->GetLatestDigestOfTag($container->containerName, $tag);
 
         if ($remoteDigest === null) {
             return false;
@@ -469,10 +520,9 @@ readonly class DockerActionManager {
         }
     }
 
-    public function PullImage(Container $container, bool $pullImage = true): void {
-
+    public function PullImage(Container $container, bool $pullImage = true, ?\Closure $addToStreamingResponseBody = null): void {
         // Skip database image pull if the last shutdown was not clean
-        if ($container->GetIdentifier() === 'nextcloud-aio-database') {
+        if ($container->identifier === 'nextcloud-aio-database') {
             if ($this->GetDatabasecontainerExitCode() > 0) {
                 $pullImage = false;
                 error_log('Not pulling the latest database image because the container was not correctly shut down.');
@@ -484,7 +534,7 @@ readonly class DockerActionManager {
         if ($pullImage) {
             if (!$this->isRegistryReachable($container)) {
                 $pullImage = false;
-                error_log('Not pulling the ' . $container->GetContainerName() . ' image for the ' . $container->GetIdentifier() . ' container because the registry does not seem to be reachable.');
+                error_log('Not pulling the ' . $container->containerName . ' image for the ' . $container->identifier . ' container because the registry does not seem to be reachable.');
             }
         }
 
@@ -498,97 +548,34 @@ readonly class DockerActionManager {
         $url = $this->BuildApiUrl(sprintf('images/create?fromImage=%s', $encodedImageName));
         $imageIsThere = true;
         try {
+            if ($addToStreamingResponseBody) {
+                $addToStreamingResponseBody($container, "Pulling image");
+            }
             $imageUrl = $this->BuildApiUrl(sprintf('images/%s/json', $encodedImageName));
             $this->guzzleClient->get($imageUrl)->getBody()->getContents();
         } catch (\Throwable $e) {
             $imageIsThere = false;
         }
-        try {
-            $this->guzzleClient->post($url);
-        } catch (RequestException $e) {
-            $message = "Could not pull image " . $imageName . ": " . $e->getResponse()?->getBody()->getContents();
-            if ($imageIsThere === false) {
-                throw new \Exception($message);
-            } else {
-                error_log($message);
+
+        $maxRetries = 3;
+        for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+            try {
+                $this->guzzleClient->post($url);
+                break;
+            } catch (RequestException $e) {
+                $message = "Could not pull image " . $imageName . " (attempt $attempt/$maxRetries): " . $e->getResponse()?->getBody()->getContents();
+                if ($attempt === $maxRetries) {
+                    if ($imageIsThere === false) {
+                        throw new \Exception($message);
+                    } else {
+                        error_log($message);
+                    }
+                } else {
+                    error_log($message . ' Retrying...');
+                    sleep(1);
+                }
             }
         }
-    }
-
-    // Replaces placeholders in $envValue with their values.
-    // E.g. "%NC_DOMAIN%:%APACHE_PORT" becomes "my.nextcloud.com:11000"
-    private function replaceEnvPlaceholders(string $envValue): string {
-        // $pattern breaks down as:
-        // % - matches a literal percent sign
-        // ([^%]+) - capture group that matches one or more characters that are NOT percent signs
-        // % - matches the closing percent sign
-        //
-        // Assumes literal percent signs are always matched and there is no
-        // escaping.
-        $pattern = '/%([^%]+)%/';
-        $matchCount = preg_match_all($pattern, $envValue, $matches);
-
-        if ($matchCount === 0) {
-            return $envValue;
-        }
-
-        $placeholders = $matches[0]; // ["%PLACEHOLDER1%", "%PLACEHOLDER2%", ...]
-        $placeholderNames = $matches[1]; // ["PLACEHOLDER1", "PLACEHOLDER2", ...]
-        $placeholderPatterns = array_map(static fn(string $p) => '/' . preg_quote($p) . '/', $placeholders); // ["/%PLACEHOLDER1%/", ...]
-        $placeholderValues = array_map($this->getPlaceholderValue(...), $placeholderNames); // ["val1", "val2"]
-        // Guaranteed to be non-null because we found the placeholders in the preg_match_all.
-        return (string) preg_replace($placeholderPatterns, $placeholderValues, $envValue);
-    }
-
-    private function getPlaceholderValue(string $placeholder) : string {
-        return match ($placeholder) {
-            'NC_DOMAIN' => $this->configurationManager->GetDomain(),
-            'NC_BASE_DN' => $this->configurationManager->GetBaseDN(),
-            'AIO_TOKEN' => $this->configurationManager->GetToken(),
-            'BORGBACKUP_REMOTE_REPO' => $this->configurationManager->GetBorgRemoteRepo(),
-            'BORGBACKUP_MODE' => $this->configurationManager->GetBackupMode(),
-            'AIO_URL' => $this->configurationManager->GetAIOURL(),
-            'SELECTED_RESTORE_TIME' => $this->configurationManager->GetSelectedRestoreTime(),
-            'RESTORE_EXCLUDE_PREVIEWS' => $this->configurationManager->GetRestoreExcludePreviews(),
-            'APACHE_PORT' => $this->configurationManager->GetApachePort(),
-            'APACHE_IP_BINDING' => $this->configurationManager->GetApacheIPBinding(),
-            'TALK_PORT' => $this->configurationManager->GetTalkPort(),
-            'TURN_DOMAIN' => $this->configurationManager->GetTurnDomain(),
-            'NEXTCLOUD_MOUNT' => $this->configurationManager->GetNextcloudMount(),
-            'BACKUP_RESTORE_PASSWORD' => $this->configurationManager->GetBorgRestorePassword(),
-            'CLAMAV_ENABLED' => $this->configurationManager->isClamavEnabled() ? 'yes' : '',
-            'TALK_RECORDING_ENABLED' => $this->configurationManager->isTalkRecordingEnabled() ? 'yes' : '',
-            'ONLYOFFICE_ENABLED' => $this->configurationManager->isOnlyofficeEnabled() ? 'yes' : '',
-            'COLLABORA_ENABLED' => $this->configurationManager->isCollaboraEnabled() ? 'yes' : '',
-            'TALK_ENABLED' => $this->configurationManager->isTalkEnabled() ? 'yes' : '',
-            'UPDATE_NEXTCLOUD_APPS' => ($this->configurationManager->isDailyBackupRunning() && $this->configurationManager->areAutomaticUpdatesEnabled()) ? 'yes' : '',
-            'TIMEZONE' => $this->configurationManager->GetTimezone() === '' ? 'Etc/UTC' : $this->configurationManager->GetTimezone(),
-            'COLLABORA_DICTIONARIES' => $this->configurationManager->GetCollaboraDictionaries() === '' ? 'de_DE en_GB en_US es_ES fr_FR it nl pt_BR pt_PT ru' : $this->configurationManager->GetCollaboraDictionaries(),
-            'IMAGINARY_ENABLED' => $this->configurationManager->isImaginaryEnabled() ? 'yes' : '',
-            'FULLTEXTSEARCH_ENABLED' => $this->configurationManager->isFulltextsearchEnabled() ? 'yes' : '',
-            'DOCKER_SOCKET_PROXY_ENABLED' => $this->configurationManager->isDockerSocketProxyEnabled() ? 'yes' : '',
-            'NEXTCLOUD_UPLOAD_LIMIT' => $this->configurationManager->GetNextcloudUploadLimit(),
-            'NEXTCLOUD_MEMORY_LIMIT' => $this->configurationManager->GetNextcloudMemoryLimit(),
-            'NEXTCLOUD_MAX_TIME' => $this->configurationManager->GetNextcloudMaxTime(),
-            'BORG_RETENTION_POLICY' => $this->configurationManager->GetBorgRetentionPolicy(),
-            'FULLTEXTSEARCH_JAVA_OPTIONS' => $this->configurationManager->GetFulltextsearchJavaOptions(),
-            'NEXTCLOUD_TRUSTED_CACERTS_DIR' => $this->configurationManager->GetTrustedCacertsDir(),
-            'ADDITIONAL_DIRECTORIES_BACKUP' => $this->configurationManager->GetAdditionalBackupDirectoriesString() !== '' ? 'yes' : '',
-            'BORGBACKUP_HOST_LOCATION' => $this->configurationManager->GetBorgBackupHostLocation(),
-            'APACHE_MAX_SIZE' => (string)($this->configurationManager->GetApacheMaxSize()),
-            'COLLABORA_SECCOMP_POLICY' => $this->configurationManager->GetCollaboraSeccompPolicy(),
-            'NEXTCLOUD_STARTUP_APPS' => $this->configurationManager->GetNextcloudStartupApps(),
-            'NEXTCLOUD_ADDITIONAL_APKS' => $this->configurationManager->GetNextcloudAdditionalApks(),
-            'NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS' => $this->configurationManager->GetNextcloudAdditionalPhpExtensions(),
-            'INSTALL_LATEST_MAJOR' => $this->configurationManager->shouldLatestMajorGetInstalled() ? 'yes' : '',
-            'REMOVE_DISABLED_APPS' => $this->configurationManager->shouldDisabledAppsGetRemoved() ? 'yes' : '',
-            // Allow to get local ip-address of database container which allows to talk to it even in host mode (the container that requires this needs to be started first then)
-            'AIO_DATABASE_HOST' => gethostbyname('nextcloud-aio-database'),
-            // Allow to get local ip-address of caddy container and add it to trusted proxies automatically
-            'CADDY_IP_ADDRESS' => in_array('caddy', $this->configurationManager->GetEnabledCommunityContainers(), true) ? gethostbyname('nextcloud-aio-caddy') : '',
-            'WHITEBOARD_ENABLED' => $this->configurationManager->isWhiteboardEnabled() ? 'yes' : '',
-            default => $this->configurationManager->GetRegisteredSecret($placeholder),
-        };
     }
 
     private function isContainerUpdateAvailable(string $id): string {
@@ -598,7 +585,7 @@ readonly class DockerActionManager {
         if ($container->GetUpdateState() === VersionState::Different) {
             $updateAvailable = '1';
         }
-        foreach ($container->GetDependsOn() as $dependency) {
+        foreach ($container->dependsOn as $dependency) {
             $updateAvailable .= $this->isContainerUpdateAvailable($dependency);
         }
         return $updateAvailable;
@@ -606,7 +593,7 @@ readonly class DockerActionManager {
 
     public function isAnyUpdateAvailable(): bool {
         // return early if instance is not installed
-        if (!$this->configurationManager->wasStartButtonClicked()) {
+        if (!$this->configurationManager->wasStartButtonClicked) {
             return false;
         }
         $id = 'nextcloud-aio-apache';
@@ -622,10 +609,10 @@ readonly class DockerActionManager {
         $container = $this->containerDefinitionFetcher->GetContainerById($id);
 
         $backupVolumes = '';
-        foreach ($container->GetBackupVolumes() as $backupVolume) {
+        foreach ($container->backupVolumes as $backupVolume) {
             $backupVolumes .= $backupVolume . ' ';
         }
-        foreach ($container->GetDependsOn() as $dependency) {
+        foreach ($container->dependsOn as $dependency) {
             $backupVolumes .= $this->getBackupVolumes($dependency);
         }
         return $backupVolumes;
@@ -641,10 +628,10 @@ readonly class DockerActionManager {
         $container = $this->containerDefinitionFetcher->GetContainerById($id);
 
         $nextcloudExecCommands = '';
-        foreach ($container->GetNextcloudExecCommands() as $execCommand) {
+        foreach ($container->nextcloudExecCommands as $execCommand) {
             $nextcloudExecCommands .= $execCommand . PHP_EOL;
         }
-        foreach ($container->GetDependsOn() as $dependency) {
+        foreach ($container->dependsOn as $dependency) {
             $nextcloudExecCommands .= $this->GetNextcloudExecCommands($dependency);
         }
         return $nextcloudExecCommands;
@@ -711,8 +698,8 @@ readonly class DockerActionManager {
             if (count($imageNameArray) === 2) {
                 $imageName = $imageNameArray[0];
             } else {
-                error_log("No tag was found when getting the current channel. You probably did not follow the documentation correctly. Changing the imageName to the default " . $output['Config']['Image']);
-                $imageName = $output['Config']['Image'];
+                error_log("Unexpected image name was found when getting the current image name of the mastercontainer. You probably did not follow the documentation correctly. Changing the image name to the default 'ghcr.io/nextcloud-releases/all-in-one'.");
+                $imageName = 'ghcr.io/nextcloud-releases/all-in-one';
             }
             apcu_add($cacheKey, $imageName);
             return $imageName;
@@ -776,7 +763,7 @@ readonly class DockerActionManager {
     public function sendNotification(Container $container, string $subject, string $message, string $file = '/notify.sh'): void {
         if ($this->GetContainerStartingState($container) === ContainerState::Running) {
 
-            $containerName = $container->GetIdentifier();
+            $containerName = $container->identifier;
 
             // schedule the exec
             $url = $this->BuildApiUrl(sprintf('containers/%s/exec', urlencode($containerName)));
@@ -901,14 +888,14 @@ readonly class DockerActionManager {
         // Add a secondary alias for domaincheck container, to keep it as similar to actual apache controller as possible.
         // If a reverse-proxy is relying on container name as hostname this allows it to operate as usual and still validate the domain
         // The domaincheck container and apache container are never supposed to be active at the same time because they use the same APACHE_PORT anyway, so this doesn't add any new constraints.
-        $alias = ($container->GetIdentifier() === 'nextcloud-aio-domaincheck') ? 'nextcloud-aio-apache' : '';
+        $alias = ($container->identifier === 'nextcloud-aio-domaincheck') ? 'nextcloud-aio-apache' : '';
 
-        $this->ConnectContainerIdToNetwork($container->GetIdentifier(), $container->GetInternalPort(), alias: $alias);
+        $this->ConnectContainerIdToNetwork($container->identifier, $container->internalPorts, alias: $alias);
 
-        if ($container->GetIdentifier() === 'nextcloud-aio-apache' || $container->GetIdentifier() === 'nextcloud-aio-domaincheck') {
-            $apacheAdditionalNetwork = $this->configurationManager->GetApacheAdditionalNetwork();
+        if ($container->identifier === 'nextcloud-aio-apache' || $container->identifier === 'nextcloud-aio-domaincheck') {
+            $apacheAdditionalNetwork = $this->configurationManager->getApacheAdditionalNetwork();
             if ($apacheAdditionalNetwork !== '') {
-                $this->ConnectContainerIdToNetwork($container->GetIdentifier(), $container->GetInternalPort(), $apacheAdditionalNetwork, false, $alias);
+                $this->ConnectContainerIdToNetwork($container->identifier, $container->internalPorts, $apacheAdditionalNetwork, false, $alias);
             }
         }
     }
@@ -917,9 +904,9 @@ readonly class DockerActionManager {
         if ($forceStopContainer) {
             $maxShutDownTime = 10;
         } else {
-            $maxShutDownTime = $container->GetMaxShutdownTime();
+            $maxShutDownTime = $container->maxShutdownTime;
         }
-        $url = $this->BuildApiUrl(sprintf('containers/%s/stop?t=%s', urlencode($container->GetIdentifier()), $maxShutDownTime));
+        $url = $this->BuildApiUrl(sprintf('containers/%s/stop?t=%s', urlencode($container->identifier), $maxShutDownTime));
         try {
             $this->guzzleClient->post($url);
         } catch (RequestException $e) {
@@ -1009,7 +996,7 @@ readonly class DockerActionManager {
     }
 
     public function GetAndGenerateSecretWrapper(string $secretId): string {
-        return $this->configurationManager->GetAndGenerateSecret($secretId);
+        return $this->configurationManager->getAndGenerateSecret($secretId);
     }
 
     public function isNextcloudImageOutdated(): bool {
@@ -1037,6 +1024,73 @@ readonly class DockerActionManager {
             return $this->gitHubContainerRegistryManager->GetLatestDigestOfTag(str_replace($prefix, '', $imageName), $tag);
         } else {
             return $this->dockerHubManager->GetLatestDigestOfTag($imageName, $tag);
+        }
+    }
+
+    public function SystemPrune(?\Closure $addToStreamingResponseBody = null): void {
+        $endpoints = [
+            // Remove stopped containers
+            'containers/prune',
+            // Remove unused images
+            'images/prune',
+            // Remove unused volumes
+            'volumes/prune',
+            // Remove unused networks
+            'networks/prune',
+            // Prune build cache
+            'build/prune',
+        ];
+
+        foreach ($endpoints as $endpoint) {
+            // Special-case images prune to include the dangling filter as requested
+            if ($endpoint === 'images/prune') {
+                $filters = json_encode(['dangling' => ['false']]);
+                $url = $this->BuildApiUrl($endpoint . '?filters=' . urlencode((string) $filters));
+            } else {
+                $url = $this->BuildApiUrl($endpoint);
+            }
+
+            if ($addToStreamingResponseBody !== null) {
+                $addToStreamingResponseBody("Running $endpoint...");
+            }
+
+            try {
+                $response = $this->guzzleClient->post($url);
+                if ($addToStreamingResponseBody !== null) {
+                    $data = json_decode((string)$response->getBody(), true);
+                    $deleted = 0;
+                    foreach (['ContainersDeleted', 'ImagesDeleted', 'VolumesDeleted', 'NetworksDeleted', 'CachesDeleted'] as $key) {
+                        if (isset($data[$key]) && is_array($data[$key])) {
+                            $deleted += count($data[$key]);
+                        }
+                    }
+                    $reclaimed = $data['SpaceReclaimed'] ?? 0;
+                    $parts = [];
+                    if ($deleted > 0) {
+                        $parts[] = "$deleted item(s) deleted";
+                    }
+                    if ($reclaimed > 0) {
+                        $i = (int)floor(log($reclaimed, 1024));
+                        $parts[] = 'Space reclaimed: ' . (string)round($reclaimed / (1024 ** $i), 2) . ' ' . ['B','KB','MB','GB'][$i];
+                    }
+                    $addToStreamingResponseBody(!empty($parts) ? implode('. ', $parts) . '.' : 'Nothing to prune.');
+                }
+            } catch (RequestException $e) {
+                error_log(sprintf('Docker prune (%s) failed: %s', $endpoint, $e->getMessage()));
+                if ($addToStreamingResponseBody !== null) {
+                    $addToStreamingResponseBody('Error: ' . $e->getMessage());
+                }
+                // continue with next prune step
+            }
+        }
+
+        if ($addToStreamingResponseBody !== null) {
+            $addToStreamingResponseBody("Docker system prune completed.");
+            sleep(1);
+
+            // We automatically reload after 10s so that the output can be read or copied if necessary
+            $addToStreamingResponseBody("Automatically reloading the page after 10s.");
+            sleep(10);
         }
     }
 }

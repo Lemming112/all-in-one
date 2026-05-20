@@ -1,14 +1,5 @@
 "use strict";
 
-function showPassword(id) {
-  let passwordField = document.getElementById(id);
-  if (passwordField.type === "password" && passwordField.value !== "") {
-    passwordField.type = "text";
-  } else if (passwordField.type === "text" && passwordField.value === "") {
-    passwordField.type = "password";
-  }
-}
-
 (function (){
   let lastError;
 
@@ -36,11 +27,11 @@ function showPassword(id) {
       showError("Server error. Please check the mastercontainer logs for details. This page will reload after 10s automatically. Then you can check the mastercontainer logs.");
       // Reload after 10s since it is expected that the updated view is shown (e.g. after starting containers)
       setTimeout(function(){
-        window.location.reload(1);
+        window.location.reload(true);
       }, 10000);
     } else {
       // If the responose is not one of the above, we should reload to show the latest content
-      window.location.reload(1);
+      window.location.reload(true);
     }
   }
 
@@ -70,14 +61,23 @@ function showPassword(id) {
     }
 
     form.onsubmit = submit;
-    console.info(form);
   }
 
   function initForms() {
     const forms = document.querySelectorAll('form.xhr')
-    console.info("Making " + forms.length + " form(s) use XHR.");
     for (const form of forms) {
       initForm(form);
+    }
+    const overlayLogForms = document.querySelectorAll('form[target="overlay-log"]')
+    for (const form of overlayLogForms) {
+        form.onsubmit = function() {
+            enableSpinner();
+            document.getElementById('overlay-log')?.classList.add('visible');
+            // Reload the page after the response was fully loaded into the iframe.
+            document.querySelector('iframe[name="overlay-log"]').addEventListener('load', () => {
+                location.reload(true);
+            });
+        };
     }
   }
 

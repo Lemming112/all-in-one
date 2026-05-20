@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:latest
 # Probably from this file: https://github.com/nextcloud/whiteboard/blob/main/Dockerfile
-FROM ghcr.io/nextcloud-releases/whiteboard:v1.4.2
+FROM ghcr.io/nextcloud-releases/whiteboard:v1.5.8
 
 USER root
 RUN set -ex; \
-    apk add --no-cache bash; \
+    apk add --no-cache bash jq; \
     chmod 777 -R /tmp; \
     if [ -f /usr/lib/chromium/chrome_crashpad_handler ] && [ ! -f /usr/lib/chromium/chrome_crashpad_handler.real ]; then \
         mv /usr/lib/chromium/chrome_crashpad_handler /usr/lib/chromium/chrome_crashpad_handler.real; \
@@ -23,4 +23,10 @@ WORKDIR /tmp
 ENTRYPOINT ["/start.sh"]
 
 LABEL com.centurylinklabs.watchtower.enable="false" \
-    org.label-schema.vendor="Nextcloud"
+    wud.watch="false" \
+    org.opencontainers.image.title="Whiteboard for Nextcloud AIO" \
+    org.opencontainers.image.description="Collaborative whiteboard service for Nextcloud All-in-One" \
+    org.opencontainers.image.url="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.source="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.vendor="Nextcloud" \
+    org.opencontainers.image.documentation="https://github.com/nextcloud/all-in-one/blob/main/readme.md"

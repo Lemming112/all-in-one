@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:latest
-FROM golang:1.25.4-alpine3.22 AS go
+FROM golang:1.26.3-alpine3.23 AS go
 
 ENV IMAGINARY_HASH=6a274b488759a896aff02f52afee6e50b5e3a3ee
 
@@ -14,7 +14,7 @@ RUN set -ex; \
         build-base; \
     go install github.com/h2non/imaginary@"$IMAGINARY_HASH";
 
-FROM alpine:3.22.2
+FROM alpine:3.23.4
 RUN set -ex; \
     apk upgrade --no-cache -a; \
     apk add --no-cache \
@@ -33,7 +33,8 @@ COPY --from=go /go/bin/imaginary /usr/local/bin/imaginary
 COPY --chmod=775 start.sh /start.sh
 COPY --chmod=775 healthcheck.sh /healthcheck.sh
 
-ENV PORT=9000
+ENV PORT=9000 \
+    AIO_LOG_LEVEL=warn
 
 USER 65534
 
@@ -43,4 +44,10 @@ ENTRYPOINT ["/start.sh"]
 
 HEALTHCHECK CMD /healthcheck.sh
 LABEL com.centurylinklabs.watchtower.enable="false" \
-    org.label-schema.vendor="Nextcloud"
+    wud.watch="false" \
+    org.opencontainers.image.title="Imaginary for Nextcloud AIO" \
+    org.opencontainers.image.description="High-performance image processing service for Nextcloud All-in-One" \
+    org.opencontainers.image.url="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.source="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.vendor="Nextcloud" \
+    org.opencontainers.image.documentation="https://github.com/nextcloud/all-in-one/blob/main/readme.md"

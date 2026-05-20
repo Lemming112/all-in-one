@@ -10,16 +10,17 @@ jobs:
     name: update collabora
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6.0.0
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     - name: Run collabora-profile-update
       run: |
         rm -f php/cool-seccomp-profile.json
-        wget https://raw.githubusercontent.com/CollaboraOnline/online/refs/heads/master/docker/cool-seccomp-profile.json
+        wget https://raw.githubusercontent.com/CollaboraOnline/online/refs/heads/main/docker/cool-seccomp-profile.json
         mv cool-seccomp-profile.json php/
         
     - name: Create Pull Request
-      uses: peter-evans/create-pull-request@84ae59a2cdc2258d6fa0732dd66352dddae2a412 # v7
+      uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v7
       with:
+        token: ${{ secrets.GITHUB_TOKEN }}
         commit-message: collabora-seccomp-update automated change
         signoff: true
         title: collabora seccomp update

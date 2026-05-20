@@ -10,6 +10,10 @@ directory_empty() {
     [ -z "$(ls -A "$1/")" ]
 }
 
+if [ "$AIO_LOG_LEVEL" = 'debug' ]; then
+    set -x
+fi
+
 run_upgrade_if_needed_due_to_app_update() {
     if php /var/www/html/occ status | grep maintenance | grep -q true; then
         php /var/www/html/occ maintenance:mode --off
@@ -20,6 +24,74 @@ run_upgrade_if_needed_due_to_app_update() {
     fi
 }
 
+NEXTCLOUD_LOG_LEVEL="$(case "$AIO_LOG_LEVEL" in
+    debug) printf '0' ;;
+    info) printf '1' ;;
+    warn) printf '2' ;;
+    error) printf '3' ;;
+esac)"
+export NEXTCLOUD_LOG_LEVEL
+
+# Create cert bundle
+if env | grep -q NEXTCLOUD_TRUSTED_CERTIFICATES_; then
+
+    # Enable debug mode
+    set -x
+
+    # Default vars
+    CERTIFICATES_ROOT_DIR="/var/www/html/data/certificates"
+    CERTIFICATE_BUNDLE="/var/www/html/data/certificates/ca-bundle.crt"
+    
+    # Remove old root certs and recreate them with current ones
+    rm -rf "$CERTIFICATES_ROOT_DIR"
+    mkdir -p "$CERTIFICATES_ROOT_DIR"
+
+    # Retrieve default root cert bundle
+    if ! [ -f "$SOURCE_LOCATION/resources/config/ca-bundle.crt" ]; then
+        echo "Root ca-bundle not found. Only concattening configured NEXTCLOUD_TRUSTED_CERTIFICATES files!"
+        # Recreate cert file
+        touch "$CERTIFICATE_BUNDLE"
+    else
+        # Write default bundle to the target ca file
+        cat "$SOURCE_LOCATION/resources/config/ca-bundle.crt" > "$CERTIFICATE_BUNDLE"
+    fi
+
+    # Iterate through certs
+    TRUSTED_CERTIFICATES="$(env | grep NEXTCLOUD_TRUSTED_CERTIFICATES_ | grep -oP '^[A-Z_a-z0-9]+')"
+    mapfile -t TRUSTED_CERTIFICATES <<< "$TRUSTED_CERTIFICATES"
+    for certificate in "${TRUSTED_CERTIFICATES[@]}"; do
+
+        # Create new line
+        echo "" >> "$CERTIFICATE_BUNDLE"
+
+        # Check if variable is an actual cert
+        if echo "${!certificate}" | grep -q "BEGIN CERTIFICATE" && echo "${!certificate}" | grep -q "END CERTIFICATE"; then
+            # Write out cert to bundle
+            echo "${!certificate}" >> "$CERTIFICATE_BUNDLE"
+        fi
+
+        # Create file in cert dir for extra logic in other places
+        if ! [ -f "$CERTIFICATES_ROOT_DIR/$CERTIFICATE_NAME" ]; then
+            touch "$CERTIFICATES_ROOT_DIR/$CERTIFICATE_NAME"
+        fi
+
+    done
+
+    # Backwards compatibility with older instances
+    if [ -f "/var/www/html/config/postgres.config.php" ]; then
+        sed -i "s|/var/www/html/data/certificates/POSTGRES|/var/www/html/data/certificates/ca-bundle.crt|" /var/www/html/config/postgres.config.php
+        sed -i "s|/var/www/html/data/certificates/MYSQL|/var/www/html/data/certificates/ca-bundle.crt|" /var/www/html/config/postgres.config.php
+    fi
+
+    # Print out bundle one last time
+    cat "$CERTIFICATE_BUNDLE"
+
+    # Disable debug mode
+    if [ "$AIO_LOG_LEVEL" != 'debug' ]; then
+        set +x
+    fi
+fi
+
 # Adjust DATABASE_TYPE to by Nextcloud supported value
 if [ "$DATABASE_TYPE" = postgres ]; then
     export DATABASE_TYPE=pgsql
@@ -27,7 +99,7 @@ fi
 
 # Only start container if Redis is accessible
 # shellcheck disable=SC2153
-while ! nc -z "$REDIS_HOST" "6379"; do
+while ! nc -z "$REDIS_HOST" "$REDIS_PORT"; do
     echo "Waiting for Redis to start..."
     sleep 5
 done
@@ -57,6 +129,11 @@ rm -f "$test_file"
 if [ -f /var/www/html/version.php ]; then
     # shellcheck disable=SC2016
     installed_version="$(php -r 'require "/var/www/html/version.php"; echo implode(".", $OC_Version);')"
+    if [ -z "$installed_version" ]; then
+        echo "Could not determine the installed Nextcloud version via php -r. The PHP installation might be broken."
+        echo "Please check the container logs and your PHP installation."
+        exit 1
+    fi
 else
     installed_version="0.0.0.0"
 fi
@@ -124,8 +201,11 @@ if ! [ -f "$NEXTCLOUD_DATA_DIR/skip.update" ]; then
             curl -fsSL -o nextcloud.tar.bz2.asc "https://download.nextcloud.com/server/releases/latest-${NEXT_MAJOR}.tar.bz2.asc"
             GNUPGHOME="$(mktemp -d)"
             export GNUPGHOME
-            # gpg key from https://nextcloud.com/nextcloud.asc
-            gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 28806A878AE423A28372792ED75899B9A724937A
+            if ! gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 28806A878AE423A28372792ED75899B9A724937A; then
+                if ! gpg --batch --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 28806A878AE423A28372792ED75899B9A724937A; then
+                    curl -sSL https://nextcloud.com/nextcloud.asc | gpg --import
+                fi
+            fi
             gpg --batch --verify nextcloud.tar.bz2.asc nextcloud.tar.bz2
             mkdir -p /usr/src/tmp
             tar -xjf nextcloud.tar.bz2 -C /usr/src/tmp/
@@ -156,7 +236,9 @@ if ! [ -f "$NEXTCLOUD_DATA_DIR/skip.update" ]; then
                 if grep -q appstoreurl /var/www/html/config/config.php; then
                     set -x
                     APPSTORE_URL="$(grep appstoreurl /var/www/html/config/config.php | grep -oP 'https://.*v[0-9]+')"
-                    set +x
+                    if [ "$AIO_LOG_LEVEL" != 'debug' ]; then
+                        set +x
+                    fi
                 fi
                 # Default appstoreurl parameter in config.php defaults to 'https://apps.nextcloud.com/api/v1' so we check for the apps.json file stored in there
                 CURL_STATUS="$(curl -LI "$APPSTORE_URL"/apps.json -o /dev/null -w '%{http_code}\n' -s)"
@@ -223,7 +305,9 @@ if ! [ -f "$NEXTCLOUD_DATA_DIR/skip.update" ]; then
                     "$SOURCE_LOCATION/custom_apps/" \
                     /var/www/html/custom_apps/
             done
-            set +x
+            if [ "$AIO_LOG_LEVEL" != 'debug' ]; then
+                set +x
+            fi
         fi
 
         # Copy these from Nextcloud archive if they don't exist yet (i.e. new install)
@@ -278,12 +362,6 @@ if ! [ -f "$NEXTCLOUD_DATA_DIR/skip.update" ]; then
         'check_data_directory_permissions' => false
     );
 EOF
-
-            # Write out postgres root cert
-            if [ -n "$NEXTCLOUD_TRUSTED_CERTIFICATES_POSTGRES" ]; then
-                mkdir /var/www/html/data/certificates
-                echo "$NEXTCLOUD_TRUSTED_CERTIFICATES_POSTGRES" > "/var/www/html/data/certificates/POSTGRES"
-            fi
 
             echo "Installing with $DATABASE_TYPE database"
             # Set a default value for POSTGRES_PORT
@@ -382,12 +460,20 @@ EOF
             # Apply log settings
             echo "Applying default settings..."
             mkdir -p /var/www/html/data
-            php /var/www/html/occ config:system:set loglevel --value="2" --type=integer
-            php /var/www/html/occ config:system:set log_type --value="file"
-            php /var/www/html/occ config:system:set logfile --value="/var/www/html/data/nextcloud.log"
+            php /var/www/html/occ config:system:set loglevel --value="$NEXTCLOUD_LOG_LEVEL" --type=integer
+            if [ "$NEXTCLOUD_LOG_TYPE" = "errorlog" ]; then
+                php /var/www/html/occ config:system:set log_type --value="errorlog"
+                php /var/www/html/occ config:system:set log_type_audit --value="errorlog"
+                php /var/www/html/occ app:disable logreader
+            else
+                php /var/www/html/occ config:system:set log_type --value="file"
+                php /var/www/html/occ config:system:set log_type_audit --value="file"
+                php /var/www/html/occ app:enable logreader
+                php /var/www/html/occ config:system:set logfile --value="/var/www/html/data/nextcloud.log"
+                php /var/www/html/occ config:system:set logfile_audit --value="/var/www/html/data/audit.log"
+            fi
             php /var/www/html/occ config:system:set log_rotate_size --value="10485760" --type=integer
             php /var/www/html/occ app:enable admin_audit
-            php /var/www/html/occ config:app:set admin_audit logfile --value="/var/www/html/data/audit.log"
             php /var/www/html/occ config:system:set log.condition apps 0 --value="admin_audit"
 
             # Apply preview settings
@@ -585,8 +671,18 @@ fi
 # Adjusting log files to be stored on a volume
 echo "Adjusting log files..."
 php /var/www/html/occ config:system:set upgrade.cli-upgrade-link --value="https://github.com/nextcloud/all-in-one/discussions/2726"
-php /var/www/html/occ config:system:set logfile --value="/var/www/html/data/nextcloud.log"
-php /var/www/html/occ config:app:set admin_audit logfile --value="/var/www/html/data/audit.log"
+php /var/www/html/occ config:system:set loglevel --value="$NEXTCLOUD_LOG_LEVEL" --type=integer
+if [ "$NEXTCLOUD_LOG_TYPE" = "errorlog" ]; then
+    php /var/www/html/occ config:system:set log_type --value="errorlog"
+    php /var/www/html/occ config:system:set log_type_audit --value="errorlog"
+    php /var/www/html/occ app:disable logreader
+else
+    php /var/www/html/occ config:system:set log_type --value="file"
+    php /var/www/html/occ config:system:set log_type_audit --value="file"
+    php /var/www/html/occ app:enable logreader
+    php /var/www/html/occ config:system:set logfile --value="/var/www/html/data/nextcloud.log"
+    php /var/www/html/occ config:system:set logfile_audit --value="/var/www/html/data/audit.log"
+fi
 php /var/www/html/occ config:system:set updatedirectory --value="/nc-updater"
 if [ -n "$NEXTCLOUD_SKELETON_DIRECTORY" ]; then
     if [ "$NEXTCLOUD_SKELETON_DIRECTORY" = "empty" ]; then
@@ -614,8 +710,12 @@ php /var/www/html/occ config:system:set documentation_url.server_logs --value="h
 php /var/www/html/occ config:system:set htaccess.RewriteBase --value="/"
 php /var/www/html/occ maintenance:update:htaccess
 
-# Revert dbpersistent setting to check if it fixes too many db connections
-php /var/www/html/occ config:system:set dbpersistent --value=false --type=bool
+# Handle db persistent settings
+if [ "$NEXTCLOUD_PERSIST_DATABASE_CONNECTIONS" = "yes" ]; then
+    php /var/www/html/occ config:system:set dbpersistent --value=true --type=bool
+else
+    php /var/www/html/occ config:system:set dbpersistent --value=false --type=bool
+fi
 
 if [ "$DISABLE_BRUTEFORCE_PROTECTION" = yes ]; then
     php /var/www/html/occ config:system:set auth.bruteforce.protection.enabled --type=bool --value=false
@@ -644,24 +744,6 @@ else
     fi
 fi
 # AIO app end # Do not remove or change this line!
-
-# Allow to add custom certs to Nextcloud's trusted cert store
-if env | grep -q NEXTCLOUD_TRUSTED_CERTIFICATES_; then
-    set -x
-    TRUSTED_CERTIFICATES="$(env | grep NEXTCLOUD_TRUSTED_CERTIFICATES_ | grep -oP '^[A-Z_a-z0-9]+')"
-    mapfile -t TRUSTED_CERTIFICATES <<< "$TRUSTED_CERTIFICATES"
-    CERTIFICATES_ROOT_DIR="/var/www/html/data/certificates"
-    mkdir -p "$CERTIFICATES_ROOT_DIR"
-    for certificate in "${TRUSTED_CERTIFICATES[@]}"; do
-        # shellcheck disable=SC2001
-        CERTIFICATE_NAME="$(echo "$certificate" | sed 's|^NEXTCLOUD_TRUSTED_CERTIFICATES_||')"
-        if ! [ -f "$CERTIFICATES_ROOT_DIR/$CERTIFICATE_NAME" ]; then
-            echo "${!certificate}" > "$CERTIFICATES_ROOT_DIR/$CERTIFICATE_NAME"
-            php /var/www/html/occ security:certificates:import "$CERTIFICATES_ROOT_DIR/$CERTIFICATE_NAME"
-        fi
-    done
-    set +x
-fi
 
 # Notify push
 if ! [ -d "/var/www/html/custom_apps/notify_push" ]; then
@@ -701,7 +783,9 @@ if [ "$COLLABORA_ENABLED" = 'yes' ]; then
     if echo "$COLLABORA_HOST" | grep -q "nextcloud-.*-collabora"; then
         COLLABORA_HOST="$NC_DOMAIN"
     fi
-    set +x
+    if [ "$AIO_LOG_LEVEL" != 'debug' ]; then
+        set +x
+    fi
     # Remove richdcoumentscode if it should be incorrectly installed
     if [ -d "/var/www/html/custom_apps/richdocumentscode" ]; then
         php /var/www/html/occ app:remove richdocumentscode
@@ -789,6 +873,7 @@ if [ "$ONLYOFFICE_ENABLED" = 'yes' ]; then
         fi
 
         # Set OnlyOffice configuration
+        php /var/www/html/occ config:system:set onlyoffice editors_check_interval --value="0" --type=integer 
         php /var/www/html/occ config:system:set onlyoffice jwt_secret --value="$ONLYOFFICE_SECRET"
         php /var/www/html/occ config:app:set onlyoffice jwt_secret --value="$ONLYOFFICE_SECRET"
         php /var/www/html/occ config:system:set onlyoffice jwt_header --value="AuthorizationJwt"
@@ -821,7 +906,9 @@ if [ "$TALK_ENABLED" = 'yes' ]; then
     if [ -z "$TURN_DOMAIN" ]; then
         TURN_DOMAIN="$TALK_HOST"
     fi
-    set +x
+    if [ "$AIO_LOG_LEVEL" != 'debug' ]; then
+        set +x
+    fi
     if ! [ -d "/var/www/html/custom_apps/spreed" ]; then
         php /var/www/html/occ app:install spreed
     elif [ "$(php /var/www/html/occ config:app:get spreed enabled)" != "yes" ]; then
@@ -829,16 +916,20 @@ if [ "$TALK_ENABLED" = 'yes' ]; then
     elif [ "$SKIP_UPDATE" != 1 ]; then
         php /var/www/html/occ app:update spreed
     fi
-    # Based on https://github.com/nextcloud/spreed/issues/960#issuecomment-416993435
-    if [ -z "$(php /var/www/html/occ talk:turn:list --output="plain")" ]; then
-        # shellcheck disable=SC2153
+    # Add turn server
+    # shellcheck disable=SC2153
+    if ! php /var/www/html/occ talk:turn:list --output="plain" | grep server | grep -q " $TURN_DOMAIN:$TALK_PORT"; then
         php /var/www/html/occ talk:turn:add turn "$TURN_DOMAIN:$TALK_PORT" "udp,tcp" --secret="$TURN_SECRET"
     fi
+    # Add stun server
     STUN_SERVER="$(php /var/www/html/occ talk:stun:list --output="plain")"
-    if [ -z "$STUN_SERVER" ] || echo "$STUN_SERVER" | grep -oP '[a-zA-Z.:0-9]+' | grep -q "^stun.nextcloud.com:443$"; then
+    if ! echo "$STUN_SERVER" | grep -q " $TURN_DOMAIN:$TALK_PORT"; then
         php /var/www/html/occ talk:stun:add "$TURN_DOMAIN:$TALK_PORT"
+    fi
+    if [ -z "$STUN_SERVER" ] || echo "$STUN_SERVER" | grep -oP '[a-zA-Z.:0-9]+' | grep -q "^stun.nextcloud.com:443$"; then
         php /var/www/html/occ talk:stun:delete "stun.nextcloud.com:443"
     fi
+    # Add HPB
     if ! php /var/www/html/occ talk:signaling:list --output="plain" | grep -q "https://$TALK_HOST$HPB_PATH"; then
         php /var/www/html/occ talk:signaling:add "https://$TALK_HOST$HPB_PATH" "$SIGNALING_SECRET" --verify
     fi
@@ -859,7 +950,9 @@ if [ -d "/var/www/html/custom_apps/spreed" ]; then
         RECORDING_SERVERS_STRING="{\"servers\":[{\"server\":\"http://$TALK_RECORDING_HOST:1234/\",\"verify\":true}],\"secret\":\"$RECORDING_SECRET\"}"
         php /var/www/html/occ config:app:set spreed recording_servers --value="$RECORDING_SERVERS_STRING"
     else
-        php /var/www/html/occ config:app:delete spreed recording_servers
+        if [ "$REMOVE_DISABLED_APPS" = yes ]; then
+            php /var/www/html/occ config:app:delete spreed recording_servers
+        fi
     fi
 fi
 
@@ -930,6 +1023,9 @@ if [ "$FULLTEXTSEARCH_ENABLED" = 'yes' ]; then
         php /var/www/html/occ app:disable fulltextsearch_elasticsearch
         php /var/www/html/occ app:disable files_fulltextsearch
     else
+        if [ -z "$FULLTEXTSEARCH_PROTOCOL" ]; then
+            FULLTEXTSEARCH_PROTOCOL="http"
+        fi
         if ! [ -d "/var/www/html/custom_apps/fulltextsearch" ]; then
             php /var/www/html/occ app:install fulltextsearch
         elif [ "$(php /var/www/html/occ config:app:get fulltextsearch enabled)" != "yes" ]; then
@@ -952,7 +1048,7 @@ if [ "$FULLTEXTSEARCH_ENABLED" = 'yes' ]; then
             php /var/www/html/occ app:update files_fulltextsearch
         fi
         php /var/www/html/occ fulltextsearch:configure '{"search_platform":"OCA\\FullTextSearch_Elasticsearch\\Platform\\ElasticSearchPlatform"}'
-        php /var/www/html/occ fulltextsearch_elasticsearch:configure "{\"elastic_host\":\"http://$FULLTEXTSEARCH_USER:$FULLTEXTSEARCH_PASSWORD@$FULLTEXTSEARCH_HOST:$FULLTEXTSEARCH_PORT\",\"elastic_index\":\"$FULLTEXTSEARCH_INDEX\"}"
+        php /var/www/html/occ fulltextsearch_elasticsearch:configure "{\"elastic_host\":\"$FULLTEXTSEARCH_PROTOCOL://$FULLTEXTSEARCH_USER:$FULLTEXTSEARCH_PASSWORD@$FULLTEXTSEARCH_HOST:$FULLTEXTSEARCH_PORT\",\"elastic_index\":\"$FULLTEXTSEARCH_INDEX\"}"
         php /var/www/html/occ files_fulltextsearch:configure "{\"files_pdf\":true,\"files_office\":true}"
 
         # Do the index
@@ -982,13 +1078,13 @@ else
     fi
 fi
 
-# Docker socket proxy
+# Docker socket proxy / HaRP
 # app_api is a shipped app
 if [ -d "/var/www/html/custom_apps/app_api" ]; then
     php /var/www/html/occ app:disable app_api
     rm -r "/var/www/html/custom_apps/app_api"
 fi
-if [ "$DOCKER_SOCKET_PROXY_ENABLED" = 'yes' ]; then
+if [ "$DOCKER_SOCKET_PROXY_ENABLED" = 'yes' ] || [ "$HARP_ENABLED" = 'yes' ]; then
     if [ "$(php /var/www/html/occ config:app:get app_api enabled)" != "yes" ]; then
         php /var/www/html/occ app:enable app_api
     fi

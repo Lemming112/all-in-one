@@ -1,5 +1,9 @@
 #!/bin/bash
 
+if [ "$AIO_LOG_LEVEL" = 'debug' ]; then
+    set -x
+fi
+
 # Wait until the apache container is ready
 while ! nc -z "$APACHE_HOST" "$APACHE_PORT"; do
     echo "Waiting for $APACHE_HOST to become available..."
@@ -18,11 +22,6 @@ else
     if [ "$COLLABORA_ENABLED" = yes ]; then
         echo "Activating Collabora config..."
         php /var/www/html/occ richdocuments:activate-config
-    fi
-    # OnlyOffice must work also if using manual-install
-    if [ "$ONLYOFFICE_ENABLED" = yes ]; then
-        echo "Activating OnlyOffice config..."
-        php /var/www/html/occ onlyoffice:documentserver --check
     fi
 fi
 

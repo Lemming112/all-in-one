@@ -27,6 +27,8 @@ OUTPUT="$(echo "$OUTPUT" | jq 'del(.services[] | select(.container_name == "next
 OUTPUT="$(echo "$OUTPUT" | jq 'del(.services[] | select(.container_name == "nextcloud-aio-borgbackup"))')"
 OUTPUT="$(echo "$OUTPUT" | jq 'del(.services[] | select(.container_name == "nextcloud-aio-docker-socket-proxy"))')"
 OUTPUT="$(echo "$OUTPUT" | jq '.services[] |= if has("depends_on") then .depends_on |= if contains(["nextcloud-aio-docker-socket-proxy"]) then del(.[index("nextcloud-aio-docker-socket-proxy")]) else . end else . end')"
+OUTPUT="$(echo "$OUTPUT" | jq 'del(.services[] | select(.container_name == "nextcloud-aio-harp"))')"
+OUTPUT="$(echo "$OUTPUT" | jq '.services[] |= if has("depends_on") then .depends_on |= if contains(["nextcloud-aio-harp"]) then del(.[index("nextcloud-aio-harp")]) else . end else . end')"
 OUTPUT="$(echo "$OUTPUT" | jq '.services[] |= if has("depends_on") then .depends_on |= map({ (.): { "condition": "service_started", "required": false } }) else . end' | jq '.services[] |= if has("depends_on") then .depends_on |= reduce .[] as $item ({}; . + $item) else . end')"
 
 sudo snap install yq
@@ -45,8 +47,12 @@ sed -i 's|- ip_binding: |- |' containers.yml
 sed -i '/AIO_TOKEN/d' containers.yml
 sed -i '/AIO_URL/d' containers.yml
 sed -i '/DOCKER_SOCKET_PROXY_ENABLED/d' containers.yml
+sed -i '/HARP_ENABLED/d' containers.yml
+sed -i '/HARP_HOST/d' containers.yml
+sed -i '/HP_SHARED_KEY/d' containers.yml
 sed -i '/ADDITIONAL_TRUSTED_PROXY/d' containers.yml
 sed -i '/TURN_DOMAIN/d' containers.yml
+sed -i '/NC_AIO_VERSION/d' containers.yml
 
 TCP="$(grep -oP '[%A-Z0-9_]+/tcp' containers.yml | sort -u)"
 mapfile -t TCP <<< "$TCP"
@@ -95,8 +101,9 @@ sed -i 's|NC_DOMAIN=|NC_DOMAIN=yourdomain.com          # TODO! Needs to be chang
 sed -i 's|NEXTCLOUD_PASSWORD=|NEXTCLOUD_PASSWORD=          # TODO! This is the password of the initially created Nextcloud admin with username "admin".|' sample.conf
 sed -i 's|TIMEZONE=|TIMEZONE=Europe/Berlin          # TODO! This is the timezone that your containers will use.|' sample.conf
 sed -i 's|COLLABORA_SECCOMP_POLICY=|COLLABORA_SECCOMP_POLICY=--o:security.seccomp=true          # Changing the value to false allows to disable the seccomp feature of the Collabora container.|' sample.conf
+sed -i 's|AIO_LOG_LEVEL=|AIO_LOG_LEVEL=warn          # Allows to adjust the global AIO log level. Valid values are debug, info, warn and error.|' sample.conf
 sed -i 's|FULLTEXTSEARCH_JAVA_OPTIONS=|FULLTEXTSEARCH_JAVA_OPTIONS="-Xms512M -Xmx512M"          # Allows to adjust the fulltextsearch java options.|' sample.conf
-sed -i 's|NEXTCLOUD_STARTUP_APPS=|NEXTCLOUD_STARTUP_APPS="deck twofactor_totp tasks calendar contacts notes"        # Allows to modify the Nextcloud apps that are installed on starting AIO the first time|' sample.conf
+sed -i 's|NEXTCLOUD_STARTUP_APPS=|NEXTCLOUD_STARTUP_APPS="deck twofactor_totp tasks calendar contacts notes"        # Allows to modify the Nextcloud apps that are installed on starting AIO the first time. You can also disable apps by using a hyphen in front of them. E.g. "-app_api"|' sample.conf
 sed -i 's|NEXTCLOUD_ADDITIONAL_APKS=|NEXTCLOUD_ADDITIONAL_APKS=imagemagick        # This allows to add additional packages to the Nextcloud container permanently. Default is imagemagick but can be overwritten by modifying this value.|' sample.conf
 sed -i 's|NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS=|NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS=imagick        # This allows to add additional php extensions to the Nextcloud container permanently. Default is imagick but can be overwritten by modifying this value.|' sample.conf
 sed -i 's|INSTALL_LATEST_MAJOR=|INSTALL_LATEST_MAJOR=no        # Setting this to yes will install the latest Major Nextcloud version upon the first installation|' sample.conf

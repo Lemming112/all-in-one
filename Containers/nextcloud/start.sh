@@ -1,5 +1,9 @@
 #!/bin/bash
 
+if [ "$AIO_LOG_LEVEL" = 'debug' ]; then
+    set -x
+fi
+
 # Set a default value for POSTGRES_PORT
 if [ -z "$POSTGRES_PORT" ]; then
     POSTGRES_PORT=5432
@@ -25,7 +29,7 @@ fi
 # Fix false database connection on old instances
 if [ -f "/var/www/html/config/config.php" ]; then
     sleep 2
-    while ! sudo -E -u www-data psql -d "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB" -c "select now()"; do
+    while ! sudo -E -u www-data env PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select now()"; do
         echo "Waiting for the database to start..."
         sleep 5
     done
@@ -53,7 +57,9 @@ if ! [ -f "/dev-dri-group-was-added" ] && [ -n "$(find /dev -maxdepth 1 -mindept
     usermod -aG "$GROUP" www-data
     touch "/dev-dri-group-was-added"
 fi
-set +x
+if [ "$AIO_LOG_LEVEL" != 'debug' ]; then
+    set +x
+fi
 
 # Check datadir permissions
 sudo -E -u www-data touch "$NEXTCLOUD_DATA_DIR/this-is-a-test-file" &>/dev/null
@@ -86,13 +92,15 @@ fi
 # Install additional php extensions
 if [ -n "$ADDITIONAL_PHP_EXTENSIONS" ]; then
     if ! [ -f "/additional-php-extensions-are-installed" ]; then
+        # Allow to disable imagick without having to enable it each time
+        if ! echo "$ADDITIONAL_PHP_EXTENSIONS" | grep -q imagick; then
+            # Remove the ini file as there is no docker-php-ext-disable script available
+            rm /usr/local/etc/php/conf.d/docker-php-ext-imagick.ini
+        fi
         read -ra ADDITIONAL_PHP_EXTENSIONS_ARRAY <<< "$ADDITIONAL_PHP_EXTENSIONS"
         for app in "${ADDITIONAL_PHP_EXTENSIONS_ARRAY[@]}"; do
             if [ "$app" = imagick ]; then
-                echo "Enabling Imagick..."
-                if ! docker-php-ext-enable imagick >/dev/null; then
-                    echo "Could not install PHP extension imagick!"
-                fi
+                # imagick is already enabled by default, so does not need to be enabled anymore.
                 continue
             fi
             # shellcheck disable=SC2086
@@ -168,6 +176,8 @@ if [ "$THIS_IS_AIO" = "true" ] && [ "$APACHE_PORT" = 443 ]; then
     sed -i "/^listen.allowed_clients/s/,$//" /usr/local/etc/php-fpm.d/www.conf
     grep listen.allowed_clients /usr/local/etc/php-fpm.d/www.conf
 fi
-set +x
+if [ "$AIO_LOG_LEVEL" != 'debug' ]; then
+    set +x
+fi
 
 exec "$@"

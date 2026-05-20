@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    kompose.version: 1.37.0 (fb0539e64)
+    kompose.version: 1.38.0 (a8f5d1cbd)
   labels:
     io.kompose.service: nextcloud-aio-apache
   name: nextcloud-aio-apache
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        kompose.version: 1.37.0 (fb0539e64)
+        kompose.version: 1.38.0 (a8f5d1cbd)
       labels:
         io.kompose.service: nextcloud-aio-apache
     spec:
@@ -37,6 +37,8 @@ spec:
         - env:
             - name: ADDITIONAL_TRUSTED_DOMAIN
               value: "{{ .Values.ADDITIONAL_TRUSTED_DOMAIN }}"
+            - name: AIO_LOG_LEVEL
+              value: "{{ .Values.AIO_LOG_LEVEL }}"
             - name: APACHE_HOST
               value: nextcloud-aio-apache
             - name: APACHE_MAX_SIZE
@@ -47,6 +49,8 @@ spec:
               value: "{{ .Values.APACHE_PORT }}"
             - name: COLLABORA_HOST
               value: nextcloud-aio-collabora
+            - name: HARP_HOST
+              value: nextcloud-aio-harp
             - name: NC_DOMAIN
               value: "{{ .Values.NC_DOMAIN }}"
             - name: NEXTCLOUD_HOST
@@ -61,7 +65,7 @@ spec:
               value: "{{ .Values.TIMEZONE }}"
             - name: WHITEBOARD_HOST
               value: nextcloud-aio-whiteboard
-          image: ghcr.io/nextcloud-releases/aio-apache:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-apache:20260515_145717
           readinessProbe:
             exec:
               command:

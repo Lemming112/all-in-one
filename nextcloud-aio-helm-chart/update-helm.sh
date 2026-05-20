@@ -407,7 +407,7 @@ rm latest.yml
 mv latest.yml.backup latest.yml
 
 # Get version of AIO
-AIO_VERSION="$(grep 'Nextcloud AIO ' ../php/templates/containers.twig | grep -oP '[0-9]+.[0-9]+.[0-9]+')"
+AIO_VERSION="$(grep -oP '[0-9]+.[0-9]+.[0-9]+' ../php/templates/includes/aio-version.twig)"
 sed -i "s|^version:.*|version: $AIO_VERSION|" ../helm-chart/Chart.yaml
 
 # Conversion of sample.conf
@@ -418,15 +418,16 @@ sed -i 's|= |: |' /tmp/sample.conf
 sed -i '/^NEXTCLOUD_DATADIR/d' /tmp/sample.conf
 sed -i '/^APACHE_IP_BINDING/d' /tmp/sample.conf
 sed -i '/^NEXTCLOUD_MOUNT/d' /tmp/sample.conf
-sed -i '/_ENABLED.*/s/ yes / "yes" /' /tmp/sample.conf
-sed -i '/_ENABLED.*/s/ no / "no" /' /tmp/sample.conf
+sed -i 's/ yes / "yes" /' /tmp/sample.conf
+sed -i 's/ no / "no" /' /tmp/sample.conf
+sed -i 's/"no" authentication/no authentication/' /tmp/sample.conf
 sed -i 's|^NEXTCLOUD_TRUSTED_CACERTS_DIR: .*|NEXTCLOUD_TRUSTED_CACERTS_DIR:        # Setting this to any value allows to automatically import root certificates into the Nextcloud container|' /tmp/sample.conf
 sed -i 's|17179869184|"17179869184"|' /tmp/sample.conf
 # shellcheck disable=SC2129
 echo "" >> /tmp/sample.conf
 # shellcheck disable=SC2129
-echo 'STORAGE_CLASS:        # By setting this, you can adjust the storage class for your volumes. This should be a fast storage like SSD backed storage!' >> /tmp/sample.conf
-echo 'STORAGE_CLASS_DATA:        # Allows to set a dedicated storage class for the Nextcloud data volume. This can be a bit slower storage than the one above. ⚠️ Warning: only set this for new installations, not existing ones!' >> /tmp/sample.conf
+echo 'STORAGE_CLASS:        # By setting this, you can adjust the storage class for your volumes. This should be a fast storage like SSD backed storage! This storage class must provide RWX and RWO volumes (ReadWriteMany and ReadWriteOnce).' >> /tmp/sample.conf
+echo 'STORAGE_CLASS_DATA:        # Allows to set a dedicated storage class for the Nextcloud data volume. This can be a bit slower storage than the one above. This storage class must provide RWX volumes (ReadWriteMany). ⚠️ Warning: only set this for new installations, not existing ones!' >> /tmp/sample.conf
 for variable in "${VOLUME_VARIABLE[@]}"; do
     echo "$variable: 1Gi       # You can change the size of the $(echo "$variable" | sed 's|_STORAGE_SIZE||;s|_|-|g' | tr '[:upper:]' '[:lower:]') volume that default to 1Gi with this value" >> /tmp/sample.conf
 done

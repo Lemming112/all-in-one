@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    kompose.version: 1.37.0 (fb0539e64)
+    kompose.version: 1.38.0 (a8f5d1cbd)
   labels:
     io.kompose.service: nextcloud-aio-nextcloud
   name: nextcloud-aio-nextcloud
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        kompose.version: 1.37.0 (fb0539e64)
+        kompose.version: 1.38.0 (a8f5d1cbd)
       labels:
         io.kompose.service: nextcloud-aio-nextcloud
     spec:
@@ -38,7 +38,7 @@ spec:
 # AIO settings start # Do not remove or change this line!
       initContainers:
         - name: init-volumes
-          image: ghcr.io/nextcloud-releases/aio-alpine:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-alpine:20260515_145717
           command:
             - chmod
             - "777"
@@ -92,6 +92,8 @@ spec:
               value: "{{ .Values.NEXTCLOUD_PASSWORD }}"
             - name: ADMIN_USER
               value: admin
+            - name: AIO_LOG_LEVEL
+              value: "{{ .Values.AIO_LOG_LEVEL }}"
             - name: APACHE_HOST
               value: nextcloud-aio-apache
             - name: APACHE_PORT
@@ -114,6 +116,8 @@ spec:
               value: "{{ .Values.FULLTEXTSEARCH_PASSWORD }}"
             - name: FULLTEXTSEARCH_PORT
               value: "9200"
+            - name: FULLTEXTSEARCH_PROTOCOL
+              value: http
             - name: FULLTEXTSEARCH_USER
               value: elastic
             - name: IMAGINARY_ENABLED
@@ -160,6 +164,8 @@ spec:
               value: nextcloud-aio-redis
             - name: REDIS_HOST_PASSWORD
               value: "{{ .Values.REDIS_PASSWORD }}"
+            - name: REDIS_PORT
+              value: "6379"
             - name: REMOVE_DISABLED_APPS
               value: "{{ .Values.REMOVE_DISABLED_APPS }}"
             - name: SIGNALING_SECRET
@@ -186,7 +192,7 @@ spec:
               value: "{{ .Values.WHITEBOARD_ENABLED }}"
             - name: WHITEBOARD_SECRET
               value: "{{ .Values.WHITEBOARD_SECRET }}"
-          image: ghcr.io/nextcloud-releases/aio-nextcloud:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-nextcloud:20260515_145717
           {{- if eq (.Values.RPSS_ENABLED | default "no") "yes" }} # AIO-config - do not change this comment!
           securityContext:
             # The items below only work in container context

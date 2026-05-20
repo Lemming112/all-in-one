@@ -12,4 +12,10 @@ USER 1001
 
 HEALTHCHECK --start-period=60s --retries=9 CMD /healthcheck.sh
 LABEL com.centurylinklabs.watchtower.enable="false" \
-    org.label-schema.vendor="Nextcloud"
+    wud.watch="false" \
+    org.opencontainers.image.title="Collabora Online for Nextcloud AIO" \
+    org.opencontainers.image.description="Collabora Online document editor from upstream for Nextcloud All-in-One" \
+    org.opencontainers.image.url="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.source="https://github.com/nextcloud/all-in-one" \
+    org.opencontainers.image.vendor="Nextcloud" \
+    org.opencontainers.image.documentation="https://github.com/nextcloud/all-in-one/blob/main/readme.md"

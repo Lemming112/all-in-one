@@ -39,6 +39,7 @@ services:
       - COLLABORA_HOST=nextcloud-aio-collabora
       - TALK_HOST=nextcloud-aio-talk
       - APACHE_PORT
+      - AIO_LOG_LEVEL
       - ONLYOFFICE_HOST=nextcloud-aio-onlyoffice
       - TZ=${TIMEZONE}
       - APACHE_MAX_SIZE
@@ -79,6 +80,7 @@ services:
       - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
       - POSTGRES_DB=nextcloud_database
       - POSTGRES_USER=nextcloud
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - PGTZ=${TIMEZONE}
     stop_grace_period: 1800s
@@ -135,6 +137,7 @@ services:
       - POSTGRES_DB=nextcloud_database
       - POSTGRES_USER=nextcloud
       - REDIS_HOST=nextcloud-aio-redis
+      - REDIS_PORT=6379
       - REDIS_HOST_PASSWORD=${REDIS_PASSWORD}
       - APACHE_HOST=nextcloud-aio-apache
       - APACHE_PORT
@@ -147,6 +150,7 @@ services:
       - TURN_SECRET
       - SIGNALING_SECRET
       - ONLYOFFICE_SECRET
+      - AIO_LOG_LEVEL
       - NEXTCLOUD_MOUNT
       - CLAMAV_ENABLED
       - CLAMAV_HOST=nextcloud-aio-clamav
@@ -164,6 +168,7 @@ services:
       - PHP_MEMORY_LIMIT=${NEXTCLOUD_MEMORY_LIMIT}
       - FULLTEXTSEARCH_ENABLED
       - FULLTEXTSEARCH_HOST=nextcloud-aio-fulltextsearch
+      - FULLTEXTSEARCH_PROTOCOL=http
       - FULLTEXTSEARCH_PORT=9200
       - FULLTEXTSEARCH_USER=elastic
       - FULLTEXTSEARCH_INDEX=nextcloud-aio
@@ -183,6 +188,7 @@ services:
       - WHITEBOARD_ENABLED
     stop_grace_period: 600s
     restart: unless-stopped
+    shm_size: 134217728
     cap_drop:
       - NET_RAW
 
@@ -200,18 +206,11 @@ services:
     expose:
       - "7867"
     volumes:
-      - nextcloud_aio_nextcloud:/nextcloud:ro
+      - nextcloud_aio_nextcloud:/var/www/html:ro
     environment:
-      - NC_DOMAIN
       - NEXTCLOUD_HOST=nextcloud-aio-nextcloud
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
-      - REDIS_HOST=nextcloud-aio-redis
-      - REDIS_HOST_PASSWORD=${REDIS_PASSWORD}
-      - POSTGRES_HOST=nextcloud-aio-database
-      - POSTGRES_PORT=5432
-      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
-      - POSTGRES_DB=nextcloud_database
-      - POSTGRES_USER=nextcloud
     restart: unless-stopped
     read_only: true
     cap_drop:
@@ -232,6 +231,7 @@ services:
       - "6379"
     environment:
       - REDIS_HOST_PASSWORD=${REDIS_PASSWORD}
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
     volumes:
       - nextcloud_aio_redis:/data:rw
@@ -254,17 +254,20 @@ services:
     expose:
       - "9980"
     environment:
-      - aliasgroup1=https://${NC_DOMAIN}:443,http://nextcloud-aio-apache:23973
-      - extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:logging.level=warning --o:logging.level_startup=warning --o:welcome.enable=false --o:remote_font_config.url=https://${NC_DOMAIN}/apps/richdocuments/settings/fonts.json --o:net.post_allow.host[0]=.+
+      - aliasgroup1=https://${NC_DOMAIN}:443,http://nextcloud-aio-apache.nextcloud-aio:23973
+      - extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:welcome.enable=false --o:fetch_update_check=0 --o:allow_update_popup=false --o:remote_font_config.url=https://${NC_DOMAIN}/apps/richdocuments/settings/fonts.json --o:net.post_allow.host[0]=.+
       - dictionaries=${COLLABORA_DICTIONARIES}
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - server_name=${NC_DOMAIN}
       - DONT_GEN_SSL_CERT=1
     restart: unless-stopped
     profiles:
       - collabora
+    shm_size: 268435456
+    tmpfs:
+      - /tmp
     cap_add:
-      - MKNOD
       - SYS_ADMIN
       - SYS_CHROOT
       - FOWNER
@@ -288,11 +291,14 @@ services:
       - ${TALK_PORT}:${TALK_PORT}/udp
     expose:
       - "8081"
+    volumes:
+      - ${NEXTCLOUD_TRUSTED_CACERTS_DIR}:/usr/local/share/ca-certificates:ro
     environment:
       - NC_DOMAIN
       - TALK_HOST=nextcloud-aio-talk
       - TURN_SECRET
       - SIGNALING_SECRET
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - TALK_PORT
       - INTERNAL_SECRET=${TALK_INTERNAL_SECRET}
@@ -325,6 +331,7 @@ services:
       - "1234"
     environment:
       - NC_DOMAIN
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - RECORDING_SECRET
       - INTERNAL_SECRET=${TALK_INTERNAL_SECRET}
@@ -354,6 +361,7 @@ services:
     expose:
       - "3310"
     environment:
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - MAX_SIZE=${NEXTCLOUD_UPLOAD_LIMIT}
     volumes:
@@ -384,6 +392,8 @@ services:
     expose:
       - "80"
     environment:
+      - AIO_LOG_LEVEL
+      - LOG_LEVEL=${AIO_LOG_LEVEL}
       - TZ=${TIMEZONE}
       - JWT_ENABLED=true
       - JWT_HEADER=AuthorizationJwt
@@ -410,6 +420,7 @@ services:
     expose:
       - "9000"
     environment:
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - IMAGINARY_SECRET
     restart: unless-stopped
@@ -436,15 +447,18 @@ services:
     expose:
       - "9200"
     environment:
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - ES_JAVA_OPTS=${FULLTEXTSEARCH_JAVA_OPTIONS}
-      - bootstrap.memory_lock=true
+      - bootstrap.memory_lock=false
       - cluster.name=nextcloud-aio
       - discovery.type=single-node
-      - logger.level=WARN
       - http.port=9200
       - xpack.license.self_generated.type=basic
       - xpack.security.enabled=false
+      - indices.fielddata.cache.size=20%
+      - indices.memory.index_buffer_size=20%
+      - thread_pool.write.queue_size=1000
       - FULLTEXTSEARCH_PASSWORD
     volumes:
       - nextcloud_aio_elasticsearch:/usr/share/elasticsearch/data:rw
@@ -470,11 +484,13 @@ services:
     tmpfs:
       - /tmp
     environment:
+      - AIO_LOG_LEVEL
       - TZ=${TIMEZONE}
       - NEXTCLOUD_URL=https://${NC_DOMAIN}
       - JWT_SECRET_KEY=${WHITEBOARD_SECRET}
       - STORAGE_STRATEGY=redis
       - REDIS_HOST=nextcloud-aio-redis
+      - REDIS_PORT=6379
       - REDIS_HOST_PASSWORD=${REDIS_PASSWORD}
       - BACKUP_DIR=/tmp
     restart: unless-stopped

@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    kompose.version: 1.37.0 (fb0539e64)
+    kompose.version: 1.38.0 (a8f5d1cbd)
   labels:
     io.kompose.service: nextcloud-aio-fulltextsearch
   name: nextcloud-aio-fulltextsearch
@@ -18,13 +18,13 @@ spec:
   template:
     metadata:
       annotations:
-        kompose.version: 1.37.0 (fb0539e64)
+        kompose.version: 1.38.0 (a8f5d1cbd)
       labels:
         io.kompose.service: nextcloud-aio-fulltextsearch
     spec:
       initContainers:
         - name: init-volumes
-          image: ghcr.io/nextcloud-releases/aio-alpine:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-alpine:20260515_145717
           command:
             - chmod
             - "777"
@@ -34,6 +34,8 @@ spec:
               mountPath: /nextcloud-aio-elasticsearch
       containers:
         - env:
+            - name: AIO_LOG_LEVEL
+              value: "{{ .Values.AIO_LOG_LEVEL }}"
             - name: ES_JAVA_OPTS
               value: "{{ .Values.FULLTEXTSEARCH_JAVA_OPTIONS | default "-Xms512M -Xmx512M" }}"
             - name: FULLTEXTSEARCH_PASSWORD
@@ -41,20 +43,24 @@ spec:
             - name: TZ
               value: "{{ .Values.TIMEZONE }}"
             - name: bootstrap.memory_lock
-              value: "true"
+              value: "false"
             - name: cluster.name
               value: nextcloud-aio
             - name: discovery.type
               value: single-node
             - name: http.port
               value: "9200"
-            - name: logger.level
-              value: WARN
+            - name: indices.fielddata.cache.size
+              value: 20%
+            - name: indices.memory.index_buffer_size
+              value: 20%
+            - name: thread_pool.write.queue_size
+              value: "1000"
             - name: xpack.license.self_generated.type
               value: basic
             - name: xpack.security.enabled
               value: "false"
-          image: ghcr.io/nextcloud-releases/aio-fulltextsearch:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-fulltextsearch:20260515_145717
           readinessProbe:
             exec:
               command:

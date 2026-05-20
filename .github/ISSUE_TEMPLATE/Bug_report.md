@@ -32,6 +32,8 @@ labels: 0. Needs triage
 
 #### Output of `sudo docker logs nextcloud-aio-mastercontainer`
 
-#### Other valuable info <!--- (like additional logs, screenshots & Co.) -->
+#### Output of `sudo docker inspect nextcloud-aio-mastercontainer`
 
-#### A picture of a cute animal <!--- (not mandatory but encouraged) -->
+#### Output of `sudo docker ps -a`
+
+#### Other valuable info <!--- (like additional logs, screenshots & Co.) -->

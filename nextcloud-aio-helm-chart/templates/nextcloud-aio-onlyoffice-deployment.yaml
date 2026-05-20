@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    kompose.version: 1.37.0 (fb0539e64)
+    kompose.version: 1.38.0 (a8f5d1cbd)
   labels:
     io.kompose.service: nextcloud-aio-onlyoffice
   name: nextcloud-aio-onlyoffice
@@ -18,13 +18,13 @@ spec:
   template:
     metadata:
       annotations:
-        kompose.version: 1.37.0 (fb0539e64)
+        kompose.version: 1.38.0 (a8f5d1cbd)
       labels:
         io.kompose.service: nextcloud-aio-onlyoffice
     spec:
       initContainers:
         - name: init-volumes
-          image: ghcr.io/nextcloud-releases/aio-alpine:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-alpine:20260515_145717
           command:
             - chmod
             - "777"
@@ -34,15 +34,19 @@ spec:
               mountPath: /nextcloud-aio-onlyoffice
       containers:
         - env:
+            - name: AIO_LOG_LEVEL
+              value: "{{ .Values.AIO_LOG_LEVEL }}"
             - name: JWT_ENABLED
               value: "true"
             - name: JWT_HEADER
               value: AuthorizationJwt
             - name: JWT_SECRET
               value: "{{ .Values.ONLYOFFICE_SECRET }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.AIO_LOG_LEVEL }}"
             - name: TZ
               value: "{{ .Values.TIMEZONE }}"
-          image: ghcr.io/nextcloud-releases/aio-onlyoffice:20251128_084214
+          image: ghcr.io/nextcloud-releases/aio-onlyoffice:20260515_145717
           readinessProbe:
             exec:
               command:

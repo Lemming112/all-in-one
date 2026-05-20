@@ -10,9 +10,10 @@
         "nextcloud-aio-talk",
         "nextcloud-aio-notify-push",
         "nextcloud-aio-whiteboard",
+        "nextcloud-aio-harp",
         "nextcloud-aio-nextcloud"
       ],
-      "display_name": "Apache",
+      "display_name": "Apache & Caddy",
       "image": "ghcr.io/nextcloud-releases/aio-apache",
       "user": "33",
       "init": true,
@@ -44,12 +45,14 @@
         "COLLABORA_HOST=nextcloud-aio-collabora",
         "TALK_HOST=nextcloud-aio-talk",
         "APACHE_PORT=%APACHE_PORT%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "ONLYOFFICE_HOST=nextcloud-aio-onlyoffice",
         "TZ=%TIMEZONE%",
         "APACHE_MAX_SIZE=%APACHE_MAX_SIZE%",
         "APACHE_MAX_TIME=%NEXTCLOUD_MAX_TIME%",
         "NOTIFY_PUSH_HOST=nextcloud-aio-notify-push",
-        "WHITEBOARD_HOST=nextcloud-aio-whiteboard"
+        "WHITEBOARD_HOST=nextcloud-aio-whiteboard",
+        "HARP_HOST=nextcloud-aio-harp"
       ],
       "volumes": [
         {
@@ -83,7 +86,7 @@
     {
       "container_name": "nextcloud-aio-database",
       "image_tag": "%AIO_CHANNEL%",
-      "display_name": "Database",
+      "display_name": "PostgreSQL",
       "image": "ghcr.io/nextcloud-releases/aio-postgresql",
       "user": "999",
       "init": true,
@@ -118,6 +121,7 @@
         "POSTGRES_PASSWORD=%DATABASE_PASSWORD%",
         "POSTGRES_DB=nextcloud_database",
         "POSTGRES_USER=nextcloud",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "PGTZ=%TIMEZONE%"
       ],
@@ -172,7 +176,8 @@
         "SIGNALING_SECRET",
         "FULLTEXTSEARCH_PASSWORD",
         "IMAGINARY_SECRET",
-        "WHITEBOARD_SECRET"
+        "WHITEBOARD_SECRET",
+        "HP_SHARED_KEY"
       ],
       "volumes": [
         {
@@ -204,6 +209,7 @@
         "POSTGRES_DB=nextcloud_database",
         "POSTGRES_USER=nextcloud",
         "REDIS_HOST=nextcloud-aio-redis",
+        "REDIS_PORT=6379",
         "REDIS_HOST_PASSWORD=%REDIS_PASSWORD%",
         "APACHE_HOST=nextcloud-aio-apache",
         "APACHE_PORT=%APACHE_PORT%",
@@ -218,6 +224,8 @@
         "SIGNALING_SECRET=%SIGNALING_SECRET%",
         "ONLYOFFICE_SECRET=%ONLYOFFICE_SECRET%",
         "AIO_URL=%AIO_URL%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
+        "NC_AIO_VERSION=v%AIO_VERSION%",
         "NEXTCLOUD_MOUNT=%NEXTCLOUD_MOUNT%",
         "CLAMAV_ENABLED=%CLAMAV_ENABLED%",
         "CLAMAV_HOST=nextcloud-aio-clamav",
@@ -236,6 +244,7 @@
         "PHP_MEMORY_LIMIT=%NEXTCLOUD_MEMORY_LIMIT%",
         "FULLTEXTSEARCH_ENABLED=%FULLTEXTSEARCH_ENABLED%",
         "FULLTEXTSEARCH_HOST=nextcloud-aio-fulltextsearch",
+        "FULLTEXTSEARCH_PROTOCOL=http",
         "FULLTEXTSEARCH_PORT=9200",
         "FULLTEXTSEARCH_USER=elastic",
         "FULLTEXTSEARCH_INDEX=nextcloud-aio",
@@ -255,10 +264,13 @@
         "THIS_IS_AIO=true",
         "IMAGINARY_SECRET=%IMAGINARY_SECRET%",
         "WHITEBOARD_SECRET=%WHITEBOARD_SECRET%",
-        "WHITEBOARD_ENABLED=%WHITEBOARD_ENABLED%"
+        "WHITEBOARD_ENABLED=%WHITEBOARD_ENABLED%",
+        "HARP_ENABLED=%HARP_ENABLED%",
+        "HP_SHARED_KEY=%HP_SHARED_KEY%"
       ],
       "stop_grace_period": 600,
       "restart": "unless-stopped",
+      "shm_size": 134217728,
       "devices": [
         "/dev/dri"
       ],
@@ -273,7 +285,7 @@
     {
       "container_name": "nextcloud-aio-notify-push",
       "image_tag": "%AIO_CHANNEL%",
-      "display_name": "Notify Push",
+      "display_name": "Client Push",
       "image": "ghcr.io/nextcloud-releases/aio-notify-push",
       "user": "33",
       "init": true,
@@ -296,21 +308,14 @@
       "volumes": [
         {
           "source": "nextcloud_aio_nextcloud",
-          "destination": "/nextcloud",
+          "destination": "/var/www/html",
           "writeable": false
         }
       ],
       "environment": [
-        "NC_DOMAIN=%NC_DOMAIN%",
         "NEXTCLOUD_HOST=nextcloud-aio-nextcloud",
-        "TZ=%TIMEZONE%",
-        "REDIS_HOST=nextcloud-aio-redis",
-        "REDIS_HOST_PASSWORD=%REDIS_PASSWORD%",
-        "POSTGRES_HOST=nextcloud-aio-database",
-        "POSTGRES_PORT=5432",
-        "POSTGRES_PASSWORD=%DATABASE_PASSWORD%",
-        "POSTGRES_DB=nextcloud_database",
-        "POSTGRES_USER=nextcloud"
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
+        "TZ=%TIMEZONE%"
       ],
       "restart": "unless-stopped",
       "read_only": true,
@@ -339,6 +344,7 @@
       "internal_port": "6379",
       "environment": [
         "REDIS_HOST_PASSWORD=%REDIS_PASSWORD%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%"
       ],
       "volumes": [
@@ -363,7 +369,7 @@
       "container_name": "nextcloud-aio-collabora",
       "image_tag": "%AIO_CHANNEL%",
       "documentation": "https://github.com/nextcloud/all-in-one/discussions/1358",
-      "display_name": "Collabora",
+      "display_name": "Nextcloud Office",
       "image": "ghcr.io/nextcloud-releases/aio-collabora",
       "init": true,
       "healthcheck": {
@@ -379,9 +385,10 @@
       ],
       "internal_port": "9980",
       "environment": [
-        "aliasgroup1=https://%NC_DOMAIN%:443,http://nextcloud-aio-apache:23973",
-        "extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:logging.level=warning --o:logging.level_startup=warning --o:welcome.enable=false %COLLABORA_SECCOMP_POLICY% --o:remote_font_config.url=https://%NC_DOMAIN%/apps/richdocuments/settings/fonts.json --o:net.post_allow.host[0]=.+",
+        "aliasgroup1=https://%NC_DOMAIN%:443,http://nextcloud-aio-apache.nextcloud-aio:23973",
+        "extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:logging.disable_server_audit=true --o:welcome.enable=false --o:fetch_update_check=0 --o:allow_update_popup=false %COLLABORA_SECCOMP_POLICY% --o:remote_font_config.url=https://%NC_DOMAIN%/apps/richdocuments/settings/fonts.json --o:net.post_allow.host[0]=.+",
         "dictionaries=%COLLABORA_DICTIONARIES%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "server_name=%NC_DOMAIN%",
         "DONT_GEN_SSL_CERT=1"
@@ -389,13 +396,16 @@
       "restart": "unless-stopped",
       "nextcloud_exec_commands": [
         "echo 'Activating Collabora config...'",
-        "php /var/www/html/occ richdocuments:activate-config --wopi-url='http://nextcloud-aio-apache:23973' --callback-url='http://nextcloud-aio-apache:23973'"
+        "php /var/www/html/occ richdocuments:activate-config --wopi-url='http://nextcloud-aio-apache.nextcloud-aio:23973' --callback-url='http://nextcloud-aio-apache.nextcloud-aio:23973'"
       ],
       "profiles": [
         "collabora"
       ],
+      "shm_size": 268435456,
+      "tmpfs": [
+        "/tmp"
+      ],
       "cap_add": [
-        "MKNOD",
         "SYS_ADMIN",
         "SYS_CHROOT",
         "FOWNER",
@@ -409,7 +419,7 @@
       "container_name": "nextcloud-aio-talk",
       "image_tag": "%AIO_CHANNEL%",
       "documentation": "https://github.com/nextcloud/all-in-one/discussions/1358",
-      "display_name": "Talk",
+      "display_name": "Nextcloud Talk",
       "image": "ghcr.io/nextcloud-releases/aio-talk",
       "user": "1000",
       "init": true,
@@ -437,11 +447,19 @@
         "8081"
       ],
       "internal_port": "%TALK_PORT%",
+      "volumes": [
+        {
+          "source": "%NEXTCLOUD_TRUSTED_CACERTS_DIR%",
+          "destination": "/usr/local/share/ca-certificates",
+          "writeable": false
+        }
+      ],
       "environment": [
         "NC_DOMAIN=%NC_DOMAIN%",
         "TALK_HOST=nextcloud-aio-talk",
         "TURN_SECRET=%TURN_SECRET%",
         "SIGNALING_SECRET=%SIGNALING_SECRET%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "TALK_PORT=%TALK_PORT%",
         "INTERNAL_SECRET=%TALK_INTERNAL_SECRET%"
@@ -471,7 +489,7 @@
     {
       "container_name": "nextcloud-aio-talk-recording",
       "image_tag": "%AIO_CHANNEL%",
-      "display_name": "Talk Recording",
+      "display_name": "Nextcloud Talk Recording",
       "image": "ghcr.io/nextcloud-releases/aio-talk-recording",
       "user": "122",
       "init": true,
@@ -489,6 +507,7 @@
       "internal_port": "1234",
       "environment": [
         "NC_DOMAIN=%NC_DOMAIN%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "RECORDING_SECRET=%RECORDING_SECRET%",
         "INTERNAL_SECRET=%TALK_INTERNAL_SECRET%"
@@ -523,6 +542,8 @@
     },
     {
       "container_name": "nextcloud-aio-borgbackup",
+      "display_name": "Borgbackup",
+      "hide_from_list": true,
       "image_tag": "%AIO_CHANNEL%",
       "image": "ghcr.io/nextcloud-releases/aio-borgbackup",
       "init": true,
@@ -530,6 +551,7 @@
         "BORG_REMOTE_REPO=%BORGBACKUP_REMOTE_REPO%",
         "BORG_PASSWORD=%BORGBACKUP_PASSWORD%",
         "BORG_MODE=%BORGBACKUP_MODE%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "SELECTED_RESTORE_TIME=%SELECTED_RESTORE_TIME%",
         "RESTORE_EXCLUDE_PREVIEWS=%RESTORE_EXCLUDE_PREVIEWS%",
         "BACKUP_RESTORE_PASSWORD=%BACKUP_RESTORE_PASSWORD%",
@@ -591,11 +613,14 @@
     },
     {
       "container_name": "nextcloud-aio-watchtower",
+      "display_name": "Watchtower",
+      "hide_from_list": true,
       "image_tag": "%AIO_CHANNEL%",
       "image": "ghcr.io/nextcloud-releases/aio-watchtower",
       "init": true,
       "environment": [
-        "CONTAINER_TO_UPDATE=nextcloud-aio-mastercontainer"
+        "CONTAINER_TO_UPDATE=nextcloud-aio-mastercontainer",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%"
       ],
       "volumes": [
         {
@@ -611,6 +636,8 @@
     },
     {
       "container_name": "nextcloud-aio-domaincheck",
+      "display_name": "Domaincheck",
+      "hide_from_list": true,
       "image_tag": "%AIO_CHANNEL%",
       "image": "ghcr.io/nextcloud-releases/aio-domaincheck",
       "init": true,
@@ -624,7 +651,8 @@
       "internal_port": "%APACHE_PORT%",
       "environment": [
         "INSTANCE_ID=%INSTANCE_ID%",
-        "APACHE_PORT=%APACHE_PORT%"
+        "APACHE_PORT=%APACHE_PORT%",
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%"
       ],
       "secrets": [
         "INSTANCE_ID"
@@ -659,6 +687,7 @@
       ],
       "internal_port": "3310",
       "environment": [
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "MAX_SIZE=%NEXTCLOUD_UPLOAD_LIMIT%"
       ],
@@ -704,6 +733,8 @@
       ],
       "internal_port": "80",
       "environment": [
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
+        "LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "JWT_ENABLED=true",
         "JWT_HEADER=AuthorizationJwt",
@@ -720,10 +751,6 @@
         "ONLYOFFICE_SECRET"
       ],
       "restart": "unless-stopped",
-      "nextcloud_exec_commands": [
-        "echo 'Activating OnlyOffice config...'",
-        "php /var/www/html/occ onlyoffice:documentserver --check"
-      ],
       "profiles": [
         "onlyoffice"
       ],
@@ -751,6 +778,7 @@
       ],
       "internal_port": "9000",
       "environment": [
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "IMAGINARY_SECRET=%IMAGINARY_SECRET%"
       ],
@@ -792,15 +820,18 @@
       ],
       "internal_port": "9200",
       "environment": [
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "ES_JAVA_OPTS=%FULLTEXTSEARCH_JAVA_OPTIONS%",
         "bootstrap.memory_lock=false",
         "cluster.name=nextcloud-aio",
         "discovery.type=single-node",
-        "logger.level=WARN",
         "http.port=9200",
         "xpack.license.self_generated.type=basic",
         "xpack.security.enabled=false",
+        "indices.fielddata.cache.size=20%",
+        "indices.memory.index_buffer_size=20%",
+        "thread_pool.write.queue_size=1000",
         "FULLTEXTSEARCH_PASSWORD=%FULLTEXTSEARCH_PASSWORD%"
       ],
       "volumes": [
@@ -824,11 +855,12 @@
     {
       "container_name": "nextcloud-aio-docker-socket-proxy",
       "image_tag": "%AIO_CHANNEL%",
-      "display_name": "Docker Socket Proxy",
+      "display_name": "Docker Socket Proxy (deprecated)",
       "image": "ghcr.io/nextcloud-releases/aio-docker-socket-proxy",
       "init": true,
       "internal_port": "2375",
       "environment": [
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%"
       ],
       "volumes": [
@@ -848,9 +880,50 @@
       ]
     },
     {
+      "container_name": "nextcloud-aio-harp",
+      "image_tag": "release",
+      "display_name": "HaRP",
+      "image": "ghcr.io/nextcloud/nextcloud-appapi-harp",
+      "init": true,
+      "internal_port": "8780",
+      "expose": [
+        "8780"
+      ],
+      "environment": [
+        "HP_SHARED_KEY=%HP_SHARED_KEY%",
+        "NC_INSTANCE_URL=https://%NC_DOMAIN%",
+        "HP_FRP_DISABLE_TLS=true",
+        "TZ=%TIMEZONE%"
+      ],
+      "secrets": [
+        "HP_SHARED_KEY"
+      ],
+      "volumes": [
+        {
+          "source": "%WATCHTOWER_DOCKER_SOCKET_PATH%",
+          "destination": "/var/run/docker.sock",
+          "writeable": false
+        },
+        {
+          "source": "nextcloud_aio_harp",
+          "destination": "/certs",
+          "writeable": true
+        }
+      ],
+      "restart": "unless-stopped",
+      "read_only": true,
+      "tmpfs": [
+        "/tmp",
+        "/run/harp"
+      ],
+      "cap_drop": [
+        "NET_RAW"
+      ]
+    },
+    {
       "container_name": "nextcloud-aio-whiteboard",
       "image_tag": "%AIO_CHANNEL%",
-      "display_name": "Whiteboard",
+      "display_name": "Nextcloud Whiteboard",
       "image": "ghcr.io/nextcloud-releases/aio-whiteboard",
       "user": "65534",
       "init": true,
@@ -870,11 +943,13 @@
       ],
       "internal_port": "3002",
       "environment": [
+        "AIO_LOG_LEVEL=%AIO_LOG_LEVEL%",
         "TZ=%TIMEZONE%",
         "NEXTCLOUD_URL=https://%NC_DOMAIN%",
         "JWT_SECRET_KEY=%WHITEBOARD_SECRET%",
         "STORAGE_STRATEGY=redis",
         "REDIS_HOST=nextcloud-aio-redis",
+        "REDIS_PORT=6379",
         "REDIS_HOST_PASSWORD=%REDIS_PASSWORD%",
         "BACKUP_DIR=/tmp"
       ],

@@ -1,7 +1,13 @@
 #!/bin/bash
 
+if [ "$AIO_LOG_LEVEL" = 'debug' ]; then
+    set -x
+fi
+
+export LOG_LEVEL="$AIO_LOG_LEVEL"
+
 # Only start container if nextcloud is accessible
-while ! nc -z "$REDIS_HOST" 6379; do
+while ! nc -z "$REDIS_HOST" "$REDIS_PORT"; do
     echo "Waiting for redis to start..."
     sleep 5
 done
@@ -11,7 +17,10 @@ if [ -z "$REDIS_DB_INDEX" ]; then
     REDIS_DB_INDEX=0
 fi
 
-export REDIS_URL="redis://$REDIS_USER:$REDIS_HOST_PASSWORD@$REDIS_HOST/$REDIS_DB_INDEX"
+# URL-encode password
+REDIS_HOST_PASSWORD="$(jq -rn --arg v "$REDIS_HOST_PASSWORD" '$v|@uri')"
+
+export REDIS_URL="redis://$REDIS_USER:$REDIS_HOST_PASSWORD@$REDIS_HOST:$REDIS_PORT/$REDIS_DB_INDEX"
 
 # Run it
 exec npm --prefix /app run server:start
