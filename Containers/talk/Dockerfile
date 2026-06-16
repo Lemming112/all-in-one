@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:latest
-FROM nats:2.14.0-scratch AS nats
+FROM nats:2.14.2-scratch AS nats
 FROM eturnal/eturnal:1.12.2-alpine AS eturnal
 FROM strukturag/nextcloud-spreed-signaling:2.1.1 AS signaling
 FROM alpine:3.23.4 AS janus
@@ -112,6 +112,7 @@ CMD ["supervisord", "-c", "/supervisord.conf"]
 HEALTHCHECK CMD /healthcheck.sh
 LABEL com.centurylinklabs.watchtower.enable="false" \
     wud.watch="false" \
+    dockhand.update="false" \
     org.opencontainers.image.title="Talk for Nextcloud AIO" \
     org.opencontainers.image.description="Nextcloud Talk with NATS, Janus, eturnal, and signaling server for Nextcloud All-in-One" \
     org.opencontainers.image.url="https://github.com/nextcloud/all-in-one" \

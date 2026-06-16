@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:latest
-FROM caddy:2.11.3-alpine AS caddy
+FROM caddy:2.11.4-alpine AS caddy
 
 # From https://github.com/docker-library/httpd/blob/master/2.4/alpine/Dockerfile
-FROM httpd:2.4.67-alpine3.23
+FROM httpd:2.4.68-alpine3.23
 
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 
@@ -103,6 +103,7 @@ CMD ["/usr/bin/supervisord", "-c", "/supervisord.conf"]
 HEALTHCHECK CMD /healthcheck.sh
 LABEL com.centurylinklabs.watchtower.enable="false" \
     wud.watch="false" \
+    dockhand.update="false" \
     org.opencontainers.image.title="Apache and Caddy for Nextcloud AIO" \
     org.opencontainers.image.description="Apache HTTP server with Caddy for Nextcloud All-in-One" \
     org.opencontainers.image.url="https://github.com/nextcloud/all-in-one" \

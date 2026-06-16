@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:latest
-FROM golang:1.26.3-alpine3.23 AS go
+FROM golang:1.26.4-alpine3.23 AS go
 
 ENV IMAGINARY_HASH=6a274b488759a896aff02f52afee6e50b5e3a3ee
 
@@ -45,6 +45,7 @@ ENTRYPOINT ["/start.sh"]
 HEALTHCHECK CMD /healthcheck.sh
 LABEL com.centurylinklabs.watchtower.enable="false" \
     wud.watch="false" \
+    dockhand.update="false" \
     org.opencontainers.image.title="Imaginary for Nextcloud AIO" \
     org.opencontainers.image.description="High-performance image processing service for Nextcloud All-in-One" \
     org.opencontainers.image.url="https://github.com/nextcloud/all-in-one" \

@@ -104,6 +104,7 @@ $app->post('/api/docker/backup-test', AIO\Controller\DockerController::class . '
 $app->post('/api/docker/restore', AIO\Controller\DockerController::class . ':StartBackupContainerRestore');
 $app->post('/api/docker/stop', AIO\Controller\DockerController::class . ':StopContainer');
 $app->post('/api/docker/backup-reset-location', AIO\Controller\DockerController::class . ':DeleteBorgBackupConfig');
+$app->post('/api/docker/nextcloud-upgrade-to-latest-major', AIO\Controller\DockerController::class . ':RunNextcloudUpgradeToLatestMajor');
 $app->post('/api/docker/prune', AIO\Controller\DockerController::class . ':SystemPrune');
 $app->get('/api/docker/logs', AIO\Controller\DockerController::class . ':GetLogs');
 $app->post('/api/auth/login', AIO\Controller\LoginController::class . ':TryLogin');
@@ -152,6 +153,7 @@ $app->get('/containers', function (Request $request, Response $response, array $
         'current_channel' => $dockerActionManager->GetCurrentChannel(),
         'is_clamav_enabled' => $configurationManager->isClamavEnabled,
         'is_onlyoffice_enabled' => $configurationManager->isOnlyofficeEnabled,
+        'is_eurooffice_enabled' => $configurationManager->isEuroofficeEnabled,
         'is_collabora_enabled' => $configurationManager->isCollaboraEnabled,
         'is_talk_enabled' => $configurationManager->isTalkEnabled,
         'borg_restore_password' => $configurationManager->borgRestorePassword,
@@ -181,8 +183,10 @@ $app->get('/containers', function (Request $request, Response $response, array $
         'community_containers' => $configurationManager->listAvailableCommunityContainers(),
         'community_containers_enabled' => $configurationManager->aioCommunityContainers,
         'bypass_container_update' => $bypass_container_update,
-    ]);
+    // Do not cache the page as it shows credentials
+    ])->withHeader('Cache-Control', 'no-store');
 })->setName('profile');
+
 $app->get('/login', function (Request $request, Response $response, array $args) use ($container) {
     $view = Twig::fromRequest($request);
     /** @var \AIO\Docker\DockerActionManager $dockerActionManager */
@@ -191,6 +195,7 @@ $app->get('/login', function (Request $request, Response $response, array $args)
         'is_login_allowed' => $dockerActionManager->isLoginAllowed(),
     ]);
 });
+
 $app->get('/setup', function (Request $request, Response $response, array $args) use ($container) {
     $view = Twig::fromRequest($request);
     /** @var \AIO\Data\Setup $setup */
@@ -209,8 +214,10 @@ $app->get('/setup', function (Request $request, Response $response, array $args)
         [
             'password' => $setup->Setup(),
         ]
-    );
+    // Do not cache the page as it shows credentials
+    )->withHeader('Cache-Control', 'no-store');
 });
+
 $app->get('/log', function (Request $request, Response $response, array $args) use ($container) {
     $params = $request->getQueryParams();
     $id = $params['id'] ?? '';
@@ -218,7 +225,13 @@ $app->get('/log', function (Request $request, Response $response, array $args) u
         throw new DI\NotFoundException();
     }
     $view = Twig::fromRequest($request);
-    return $view->render($response, 'log.twig', ['id' => $id]);
+    return $view->render(
+        $response, 'log.twig', 
+        [
+            'id' => $id
+        ]
+    // Do not cache the page as it might shows credentials
+    )->withHeader('Cache-Control', 'no-store');
 });
 
 // Auth Redirector

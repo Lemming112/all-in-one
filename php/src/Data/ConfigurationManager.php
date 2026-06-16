@@ -5,6 +5,7 @@ namespace AIO\Data;
 
 use AIO\Auth\PasswordGenerator;
 use AIO\Controller\DockerController;
+use AIO\Helper\NetworkHelper;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\TransferException;
 
@@ -98,9 +99,14 @@ class ConfigurationManager
         set { $this->set('isOnlyofficeEnabled', $value); }
     }
 
+    public bool $isEuroofficeEnabled {
+        get => $this->get('isEuroofficeEnabled', true);
+        set { $this->set('isEuroofficeEnabled', $value); }
+    }
+
     public bool $isCollaboraEnabled {
         // Type-cast because old configs could have 1/0 for this key.
-        get => (bool) $this->get('isCollaboraEnabled', true);
+        get => (bool) $this->get('isCollaboraEnabled', false);
         set { $this->set('isCollaboraEnabled', $value); }
     }
 
@@ -1086,6 +1092,7 @@ class ConfigurationManager
             'CLAMAV_ENABLED' => $this->isClamavEnabled ? 'yes' : '',
             'TALK_RECORDING_ENABLED' => $this->isTalkRecordingEnabled ? 'yes' : '',
             'ONLYOFFICE_ENABLED' => $this->isOnlyofficeEnabled ? 'yes' : '',
+            'EUROOFFICE_ENABLED' => $this->isEuroofficeEnabled ? 'yes' : '',
             'COLLABORA_ENABLED' => $this->isCollaboraEnabled ? 'yes' : '',
             'TALK_ENABLED' => $this->isTalkEnabled ? 'yes' : '',
             'UPDATE_NEXTCLOUD_APPS' => ($this->isDailyBackupRunning() && $this->areAutomaticUpdatesEnabled()) ? 'yes' : '',
@@ -1108,12 +1115,12 @@ class ConfigurationManager
             'NEXTCLOUD_STARTUP_APPS' => $this->getNextcloudStartupApps(),
             'NEXTCLOUD_ADDITIONAL_APKS' => $this->nextcloudAdditionalApks,
             'NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS' => $this->nextcloudAdditionalPhpExtensions,
-            'INSTALL_LATEST_MAJOR' => $this->installLatestMajor ? 'yes' : '',
+            'INSTALL_LATEST_MAJOR' => ($this->installLatestMajor !== '' && $this->installLatestMajor !== 'no') ? 'yes' : '',
             'REMOVE_DISABLED_APPS' => $this->nextcloudKeepDisabledApps ? '' : 'yes',
             // Allow to get local ip-address of database container which allows to talk to it even in host mode (the container that requires this needs to be started first then)
-            'AIO_DATABASE_HOST' => gethostbyname('nextcloud-aio-database'),
+            'AIO_DATABASE_HOST' => NetworkHelper::resolveHostname('nextcloud-aio-database'),
             // Allow to get local ip-address of caddy container and add it to trusted proxies automatically
-            'CADDY_IP_ADDRESS' => in_array('caddy', $this->aioCommunityContainers, true) ? gethostbyname('nextcloud-aio-caddy') : '',
+            'CADDY_IP_ADDRESS' => in_array('caddy', $this->aioCommunityContainers, true) ? NetworkHelper::resolveHostname('nextcloud-aio-caddy') : '',
             'WHITEBOARD_ENABLED' => $this->isWhiteboardEnabled ? 'yes' : '',
             'AIO_VERSION' => $this->getAioVersion(),
             default => $this->getRegisteredSecret($placeholder),

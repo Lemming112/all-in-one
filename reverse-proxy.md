@@ -218,6 +218,8 @@ Add this as a new Apache site config:
     RewriteEngine On
     ProxyPreserveHost On
     RequestHeader set X-Real-IP %{REMOTE_ADDR}s
+    # Added to support Euro-office
+    RequestHeader set X-Forwarded-Proto "https"
     AllowEncodedSlashes NoDecode
     
     # Adjust the two lines below to match APACHE_PORT and APACHE_IP_BINDING. See https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md#adapting-the-sample-web-server-configurations-below
@@ -523,6 +525,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:11000$request_uri; # Adjust to match APACHE_PORT and APACHE_IP_BINDING. See https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md#adapting-the-sample-web-server-configurations-below
 
+        proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Port $server_port;
         proxy_set_header X-Forwarded-Scheme $scheme;
@@ -897,6 +900,8 @@ The examples below define the dynamic configuration in YAML files. If you rather
             hostsProxyHeaders:
               - "X-Forwarded-Host"
             referrerPolicy: "same-origin"
+            customRequestHeaders:
+              X-Forwarded-Proto: "https"
 
         https-redirect:
           redirectscheme:
@@ -992,6 +997,8 @@ The examples below define the dynamic configuration in YAML files. If you rather
             hostsProxyHeaders:
               - "X-Forwarded-Host"
             referrerPolicy: "same-origin"
+            customRequestHeaders:
+              X-Forwarded-Proto: "https"
 
         https-redirect:
           redirectscheme:
