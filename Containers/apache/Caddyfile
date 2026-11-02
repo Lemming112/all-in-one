@@ -1,4 +1,6 @@
 {
+    admin off
+
     auto_https disable_redirects
 
     storage file_system {
@@ -9,8 +11,21 @@
         # trusted_proxies placeholder
     }
 
+    # Plain http on purpose, so limit it to h1 to avoid caddy warning that HTTP/2 and HTTP/3 were
+    # skipped. Excluding the `http` logger would also hide acme messages.
+    servers :23973 {
+        protocols h1
+        # A scoped block overrides the address-less one above, so repeat trusted_proxies here.
+        # trusted_proxies placeholder
+    }
+
+    # apache-port servers placeholder
+
     log {
-        level ERROR
+        level {$CADDY_LOG_LEVEL}
+        # Below ERROR, caddy prints 'admin endpoint disabled' on every start, which is expected
+        # since we set `admin off` above.
+        exclude admin
     }
 }
 
@@ -24,6 +39,11 @@ http://{$APACHE_HOST}.nextcloud-aio:23973, # For Collabora callback and WOPI req
         -X-Powered-By
         -Via
     }
+
+    # Clear client-supplied X-Real-IP so it can't be spoofed towards the backends
+    request_header -X-Real-IP
+
+    encode
 
     # Collabora
     route /browser/* {
@@ -47,6 +67,7 @@ http://{$APACHE_HOST}.nextcloud-aio:23973, # For Collabora callback and WOPI req
         uri strip_prefix /onlyoffice
         reverse_proxy {$ONLYOFFICE_HOST}:80 {
             header_up X-Forwarded-Host {http.request.hostport}/onlyoffice
+            header_up X-Forwarded-Proto https
         }
     }
 
@@ -55,6 +76,7 @@ http://{$APACHE_HOST}.nextcloud-aio:23973, # For Collabora callback and WOPI req
         uri strip_prefix /eurooffice
         reverse_proxy {$EUROOFFICE_HOST}:80 {
             header_up X-Forwarded-Prefix /eurooffice
+            header_up X-Forwarded-Proto https
         }
     }
 
@@ -85,7 +107,7 @@ http://{$APACHE_HOST}.nextcloud-aio:23973, # For Collabora callback and WOPI req
     # TLS options
     tls {
         issuer acme {
-            profile tlsserver
+            profile shortlived
             # Disable HTTP challenge because that would require port 80, which we don't get (it's exposed to the mastercontainer).
             # This container by default only exposes port 443 if not configured otherwise via APACHE_PORT.
             disable_http_challenge

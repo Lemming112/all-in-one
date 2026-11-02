@@ -27,7 +27,7 @@
             <script type="text/javascript" src="timezone.js?v1"></script>
 
             {# js for optional containers and additional containers forms #}
-            <script type="text/javascript" src="containers-form-submit.js?v8"></script>
+            <script type="text/javascript" src="containers-form-submit.js?v9"></script>
 
             {% set hasBackupLocation = borg_backup_host_location or borg_remote_repo %}
             {% set isAnyRunning = false %}
@@ -37,8 +37,8 @@
             {% set isBackupOrRestoreRunning = false %}
             {% set isApacheStarting = false %}
             {# Setting newMajorVersion to '' will hide corresponding options/elements, can be set to an integer like 26 in order to show corresponding elements. If set, also increase installLatestMajor in https://github.com/nextcloud/all-in-one/blob/main/php/src/Controller/DockerController.php #}
-            {% set newMajorVersionString = '26 Spring' %}
-            {% set oldMajorVersionString = '25 Autumn' %}
+            {% set newMajorVersionString = '' %}
+            {% set oldMajorVersionString = '' %}
 
             {% if is_backup_container_running == true %}
                 {% if borg_backup_mode == 'backup' or borg_backup_mode == 'restore' %}
@@ -119,11 +119,30 @@
                                 {% endif %}
                                 <input type="submit" value="Submit domain" />
                             </form>
+
+                            <details>
+                                <summary>Don't have a domain? Get a free one from deSEC</summary>
+                                <p><a target="_blank" href="https://desec.io">deSEC</a> offers free dynamic DNS subdomains under <strong>dedyn.io</strong>. AIO can register an account and a subdomain for you automatically. Click the button below to start; the registration runs in a small window so you can adjust the details and complete the email verification without losing this page. Once it's done, this page reloads with your new domain configured. (To make your instance available publicly you additionally would have to make sure that port 443 is open in your server's firewall, and – if applicable – the port is also forwarded by your router to your server. See below for more details on port forwarding.)</p>
+                                {% if desec_awaiting_verification or desec_account_registered %}
+                                    <p>⚠️ A deSEC registration for <strong>{{ desec_email }}</strong> is already in progress but not finished yet. Click the button below to continue it.</p>
+                                    <button type="button" class="button" data-desec-open>Continue deSEC registration</button>
+                                {% else %}
+                                    <button type="button" class="button" data-desec-open>Register free domain via deSEC</button>
+                                {% endif %}
+                            </details>
+                            <div id="desec-modal" class="modal" role="dialog" aria-modal="true" aria-label="Register a free deSEC domain" hidden>
+                                <div class="modal-content">
+                                    <button type="button" class="modal-close" data-desec-close aria-label="Close">&times;</button>
+                                    <iframe id="desec-frame" title="Register a free deSEC domain"></iframe>
+                                </div>
+                            </div>
+                            <script type="text/javascript" src="desec-modal.js"></script>
+
                             {% if skip_domain_validation == false %}
                                 <p>Make sure that this server is reachable on port 443 (port 443/tcp is open/forwarded in your firewall/router and 443/udp as well if you want to enable http3) and that you've correctly set up the DNS config for the domain that you enter (set the A record to your public ipv4-address and if you need ipv6, set the AAAA record to your public ipv6-address. A CNAME record is, of course, also possible). You should see hints on what went wrong in the top right corner if your domain is not accepted.</p>
                                 <details>
                                     <summary>Click here for further hints</summary>
-                                    <p>If you do not have a domain yet, you can get one for free e.g. from duckdns.org and others. Recommended is to use <a target="_blank" href="https://github.com/nextcloud/all-in-one/discussions/6817">Tailscale</a></p>
+                                    <p>If you do not have a domain yet, the easiest option is to use the <strong>deSEC free domain</strong> registration below. You can also get a free domain from duckdns.org or others, or use <a target="_blank" href="https://github.com/nextcloud/all-in-one/discussions/6817">Tailscale</a>.</p>
                                     <p>If you have a dynamic public IP-address, you can use e.g. <a target="_blank" href="https://ddclient.net/">DDclient</a> with a compatible domain provider for DNS updates.</p>
                                     <p>If you only want to install AIO locally without exposing it to the public internet or if you cannot do so, feel free to follow <a target="_blank" href="https://github.com/nextcloud/all-in-one/blob/main/local-instance.md">this documentation</a>.</p>
                                     <p>If you should be using Cloudflare Proxy for your domain, make sure to disable the Proxy feature temporarily as it might block the domain validation attempts.</p>
@@ -333,6 +352,9 @@
                             <p>Restore or Backup currently running. Cannot start the containers until Restore or Backup is complete.</p>
                         {% else %}
                             {% if was_start_button_clicked == false %}
+                                {% if is_desec_domain == true %}
+                                    {% include 'includes/desec-domain-notice.twig' %}
+                                {% endif %}
                                 <p>Clicking on the button below will download all docker containers and start them. This can take a long time depending on your internet connection. Since the overall size is a few GB, this can take around 5-10 min or more. Please be patient!</p>
                             {% endif %}
                             {% if is_mastercontainer_update_available == true %}
@@ -348,6 +370,9 @@
                                         <input type="hidden" name="{{csrf.keys.name}}" value="{{csrf.name}}">
                                         <input type="hidden" name="{{csrf.keys.value}}" value="{{csrf.value}}">
                                         <input id="base_path" type="hidden" name="base_path" value="">
+                                        {% if bypass_container_update == true %}
+                                            <input type="hidden" name="bypass_container_update" value="true">
+                                        {% endif %}
                                         {% if newMajorVersionString != '' %}
                                             <input type="checkbox" id="install_latest_major" name="install_latest_major"><label for="install_latest_major">Install Nextcloud Hub {{ newMajorVersionString }} (if unchecked, Nextcloud Hub {{ oldMajorVersionString }} will get installed)</label><br>
                                         {% endif %}
@@ -379,6 +404,22 @@
                     {% endif %}
 
                     {% if was_start_button_clicked == true %}
+
+                        {% if is_desec_domain %}
+                            <h2>deSEC account credentials</h2>
+                            {% if desec_password %}
+                                {# AIO created this account, so it generated and stored the password.
+                                   Show it so the user can log in at desec.io if they ever need to. #}
+                                <p>Your domain <strong>{{ domain }}</strong> is managed via <a target="_blank" href="https://desec.io">deSEC</a>. Below are your deSEC account credentials. You can use them to log in at <a target="_blank" href="https://desec.io">desec.io</a> to manage your domain directly.</p>
+                                <p>Email: <strong>{{ desec_email }}</strong></p>
+                                <p><details class="inline-details"><summary>Reveal deSEC password</summary><strong>{{ desec_password }}</strong></details></p>
+                                <p>Please save these credentials in a safe place.</p>
+                            {% else %}
+                                {# The user logged in with their own existing deSEC account; AIO never
+                                   stored their password, so there is nothing to reveal. #}
+                                <p>Your domain <strong>{{ domain }}</strong> is managed via your existing <a target="_blank" href="https://desec.io">deSEC</a> account (<strong>{{ desec_email }}</strong>). Log in at <a target="_blank" href="https://desec.io">desec.io</a> with your own password to manage your domain directly.</p>
+                            {% endif %}
+                        {% endif %}
 
                         {% if is_backup_section_enabled == false %}
                             <h2>Backup and restore</h2>
@@ -456,7 +497,11 @@
                                         <summary>Click here to reveal all backup options (including an option for automatic updates)</summary>
                                     {% endif %}
                                     <h3>Backup information</h3>
-                                    <p>This is your encryption password for backups: <strong id="borg-backup-password">{{ borgbackup_password }}</strong></p>
+                                    {% if has_backup_run_once == true %}
+                                        <p><details class="inline-details"><summary>Reveal your encryption password for backups</summary><strong id="borg-backup-password">{{ borgbackup_password }}</strong></details></p>
+                                    {% else %}
+                                        <p>This is your encryption password for backups: <strong id="borg-backup-password">{{ borgbackup_password }}</strong></p>
+                                    {% endif %}
                                     <p>Please save this password in a safe place. You won't be able to restore from backup if you lose this password!</p>
                                     <p>All important data from your Nextcloud AIO instance such as the database, your files and the mastercontainer's configuration files, will be backed up.</p>
                                     <p>The backup uses a tool called <a target="_blank" href="https://github.com/borgbackup/borg#what-is-borgbackup"><strong>BorgBackup</strong></a>, a well-known server backup tool that efficiently backs up your files and encrypts them on the fly.</p>

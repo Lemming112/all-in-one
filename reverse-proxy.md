@@ -108,7 +108,7 @@ To make your Nextcloud AIO instance accessible from the public Internet (not jus
 ## Configuration and Deployment
 
 > [!NOTE]
-> These instructions assume you already have a domain name pointing to your server's public IP address. If you don't have a domain yet, see the recommendations below.
+> These instructions assume you already have a domain name pointing to your server's public IP address. If you don't have a domain yet, AIO can register a free dynamic-DNS subdomain under `dedyn.io` for you via the built-in [deSEC integration](https://github.com/nextcloud/all-in-one#how-to-get-a-free-domain-via-desec) — no external setup needed. Alternatively, see the recommendations below.
 
 ### Quick overview
 
@@ -121,7 +121,7 @@ To run Nextcloud AIO behind an external reverse proxy or secure tunneling/proxyi
 The sections below provide detailed instructions for each step.
 
 > [!TIP]
-> If you don't have a domain yet, we recommend using [an approach using Tailscale](https://github.com/nextcloud/all-in-one/discussions/6817). If you don't have an external reverse proxy yet, we recommend [Caddy](https://github.com/nextcloud/all-in-one/discussions/575).
+> If you don't have a domain yet, AIO can register a free `*.dedyn.io` subdomain for you via [deSEC](https://desec.io) directly from the AIO interface — see [How to get a free domain via deSEC](https://github.com/nextcloud/all-in-one#how-to-get-a-free-domain-via-desec). This is the recommended option. Alternatively, you can use [Tailscale](https://github.com/nextcloud/all-in-one/discussions/6817). If you don't have an external reverse proxy yet, we recommend [Caddy](https://github.com/nextcloud/all-in-one/discussions/575).
 
 ### Step-by-Step Instructions
 
@@ -173,7 +173,7 @@ The process to run Nextcloud AIO behind a reverse proxy has three required steps
 
     The reverse-proxy container needs to be connected to the nextcloud containers. This can be achieved one of these 3 ways:
     1. Utilize host networking instead of docker bridge networking: Specify `--network host` option (or `network_mode: host` for docker-compose) as setting for the reverse proxy container to connect it to the host network. If you are using a firewall on the server, you need to open ports 80 and 443 for the reverse proxy manually. With this setup, the default sample configurations with reverse-proxy pointing to `localhost:$APACHE_PORT` should work directly.
-    1. Connect nextcloud's external-facing containers to the reverse-proxy's docker network by specifying env variable APACHE_ADDITIONAL_NETWORK. With this setup, the reverse proxy can utilize Docker bridge network's DNS name resolution to access nextcloud at `http://nextcloud-aio-apache.nextcloud-aio:$APACHE_PORT`. ⚠️⚠️⚠️ Note, the specified network must already exist before Nextcloud AIO is started. Otherwise it will fail to start the container because the network is not existing.
+    1. Connect nextcloud's external-facing containers to the reverse-proxy's docker network by specifying env variable APACHE_ADDITIONAL_NETWORK. With this setup, the reverse proxy can utilize Docker bridge network's DNS name resolution to access nextcloud at `http://nextcloud-aio-apache:$APACHE_PORT`. ⚠️⚠️⚠️ Note, the specified network must already exist before Nextcloud AIO is started. Otherwise it will fail to start the container because the network is not existing.
     1. Connect the reverse-proxy container to the `nextcloud-aio` network by specifying it as a secondary (external) network for the reverse proxy container. With this setup also, the reverse proxy can utilize Docker bridge network's DNS name resolution to access nextcloud at `http://nextcloud-aio-apache.nextcloud-aio:$APACHE_PORT` .
 
     </details>
@@ -214,22 +214,15 @@ Add this as a new Apache site config:
 <VirtualHost *:443>
     ServerName <your-nc-domain>
 
-    # Reverse proxy based on https://httpd.apache.org/docs/current/mod/mod_proxy_wstunnel.html
     RewriteEngine On
     ProxyPreserveHost On
-    RequestHeader set X-Real-IP %{REMOTE_ADDR}s
     # Added to support Euro-office
     RequestHeader set X-Forwarded-Proto "https"
     AllowEncodedSlashes NoDecode
     
     # Adjust the two lines below to match APACHE_PORT and APACHE_IP_BINDING. See https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md#adapting-the-sample-web-server-configurations-below
-    ProxyPass / http://localhost:11000/ nocanon
+    ProxyPass / http://localhost:11000/ nocanon upgrade=websocket
     ProxyPassReverse / http://localhost:11000/
-    
-    RewriteCond %{HTTP:Upgrade} websocket [NC]
-    RewriteCond %{HTTP:Connection} upgrade [NC]
-    RewriteCond %{THE_REQUEST} "^[a-zA-Z]+ /(.*) HTTP/\d+(\.\d+)?$"
-    RewriteRule .? "ws://localhost:11000/%1" [P,L,UnsafeAllow3F] # Adjust to match APACHE_PORT and APACHE_IP_BINDING. See https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md#adapting-the-sample-web-server-configurations-below
 
     # Enable h2, h2c and http1.1
     Protocols h2 h2c http/1.1
@@ -244,8 +237,8 @@ Add this as a new Apache site config:
     SSLHonorCipherOrder     off
     SSLSessionTickets       off
 
-    # If running apache on a subdomain (eg. nextcloud.example.com) of a domain that already has an wildcard ssl certificate from certbot on this machine, 
-    # the <your-nc-domain> in the below lines should be replaced with just the domain (eg. example.com), not the subdomain. 
+    # If running apache on a subdomain (eg. nextcloud.example.com) of a domain that already has a wildcard ssl certificate from certbot on this machine,
+    # the <your-nc-domain> in the below lines should be replaced with just the domain (eg. example.com), not the subdomain.
     # In this case the subdomain should already be secured without additional actions
     SSLCertificateFile /etc/letsencrypt/live/<your-nc-domain>/fullchain.pem
     SSLCertificateKeyFile /etc/letsencrypt/live/<your-nc-domain>/privkey.pem
@@ -270,7 +263,17 @@ Add this as a new Apache site config:
 ⚠️ **Please note:** Look into [this](#adapting-the-sample-web-server-configurations-below) to adapt the above example configuration.
 
 To make the config work you can run the following command:
-`sudo a2enmod rewrite proxy proxy_http proxy_wstunnel ssl headers http2`
+`sudo a2enmod rewrite proxy proxy_http ssl headers http2`
+
+The `upgrade=websocket` parameter requires Apache 2.4.47 or later. On older versions, replace it with the following block, which needs `proxy_wstunnel` enabled additionally:
+
+```
+    RewriteEngine On
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteCond %{THE_REQUEST} "^[a-zA-Z]+ /(.*) HTTP/\d+(\.\d+)?$"
+    RewriteRule .? "ws://localhost:11000/%1" [P,L,NE,UnsafeAllow3F] # Adjust to match APACHE_PORT and APACHE_IP_BINDING. See https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md#adapting-the-sample-web-server-configurations-below
+```
 
 </details>
 
@@ -321,7 +324,7 @@ You can get AIO running using the ACME DNS-challenge. Here is how to do it.
 
 1. Now continue with [point 2](#2-use-this-startup-command) but additionally, add `--env SKIP_DOMAIN_VALIDATION=true` to the docker run command of the mastercontainer (but before the last line `ghcr.io/nextcloud-releases/all-in-one:latest`) which will disable the domain validation (because it is known that the domain validation will not work when using the DNS-challenge since no port is publicly opened).
 
-**Advice:** In order to make it work in your home network, you may add the internal ipv4-address of your reverse proxy as A DNS-record to your domain and disable the dns-rebind-protection in your router. Another way it to set up a local dns-server like a pi-hole and set up a custom dns-record for that domain that points to the internal ip-adddress of your reverse proxy (see https://github.com/nextcloud/all-in-one#how-can-i-access-nextcloud-locally). If both is not possible, you may add the domain to the hosts file which is needed then for any devices that shall use the server.
+**Advice:** In order to make it work in your home network, you may add the internal ipv4-address of your reverse proxy as A DNS-record to your domain and disable the dns-rebind-protection in your router. Another way it to set up a local dns-server like a pi-hole and set up a custom dns-record for that domain that points to the internal ip-address of your reverse proxy (see https://github.com/nextcloud/all-in-one#how-can-i-access-nextcloud-locally). If both is not possible, you may add the domain to the hosts file which is needed then for any devices that shall use the server.
 
 </details>
 
@@ -476,90 +479,110 @@ Add the below template to your Nginx config.
 **Note:** please check your Nginx version by running: `nginx -v` and adjust the lines marked with version notes to fit your version.
 
 ```
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    '' close;
-}
+pcre_jit on;              # needs to be set in the main nginx config block (outside location, server and http block)
+worker_processes auto;    # needs to be set in the main nginx config block (outside location, server and http block)
+worker_cpu_affinity auto; # needs to be set in the main nginx config block (outside location, server and http block)
 
-server {
-    listen 80;
-    listen [::]:80;            # comment to disable IPv6
+#quic_bpf on; # improves HTTP/3 / QUIC - supported on nginx v1.25.0+, if nginx runs as a docker container you need to give it the BPF, PERFMON and NET_ADMIN caps - breaks nginx config reloads - needs to be set in the main nginx config block (outside location, server and http block)
 
-    if ($scheme = "http") {
-        return 301 https://$host$request_uri;
-    }
-    if ($http_x_forwarded_proto = "http") {
-        return 301 https://$host$request_uri;
-    }
+http {
+    sendfile on;
+    aio threads;
+    aio_write on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    server_tokens off;
+    reset_timedout_connection on;
 
-    listen 443 ssl http2;      # for nginx versions below v1.25.1
-    listen [::]:443 ssl http2; # for nginx versions below v1.25.1 - comment to disable IPv6
+    # uncomment and set the trusted IPs if a second reverse proxy (or cloudflare) runs in front of nginx
+    #real_ip_recursive on;
+    #real_ip_header X-Forwarded-For;
+    #set_real_ip_from unix:;
+    #set_real_ip_from 127.0.0.0/8;
+    #set_real_ip_from ::1/128;
+    #set_real_ip_from ...;
 
-    # listen 443 ssl;      # for nginx v1.25.1+
-    # listen [::]:443 ssl; # for nginx v1.25.1+ - keep comment to disable IPv6
-    # http2 on;            # uncomment to enable HTTP/2 - supported on nginx v1.25.1+
-
-    # listen 443 quic reuseport;       # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+ - please remove "reuseport" if there is already another quic listener on port 443 with enabled reuseport
-    # listen [::]:443 quic reuseport;  # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+ - please remove "reuseport" if there is already another quic listener on port 443 with enabled reuseport - keep comment to disable IPv6
-    # http3 on;                                 # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
-    # quic_gso on;                              # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
-    # quic_retry on;                            # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
-    # quic_bpf on;                              # improves  HTTP/3 / QUIC - supported on nginx v1.25.0+, if nginx runs as a docker container you need to give it privileged permission to use this option
-    # add_header Alt-Svc 'h3=":443"; ma=86400'; # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
-
-    proxy_buffering off;
-    proxy_request_buffering off;
-
-    client_max_body_size 0;
-    client_body_buffer_size 512k;
-    # http3_stream_buffer_size 512k; # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
-
-    # The default NEXTCLOUD_MAX_TIME value is 3600 seconds.
-    # By setting it 10 seconds higher than that, we make sure that always Nextcloud times out and not NGINX.
-    # If you increased NEXTCLOUD_MAX_TIME, increase the timeout below accordingly.
-    proxy_read_timeout 3610s;
-
-
-    server_name <your-nc-domain>;
-
-    location / {
-        proxy_pass http://127.0.0.1:11000$request_uri; # Adjust to match APACHE_PORT and APACHE_IP_BINDING. See https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md#adapting-the-sample-web-server-configurations-below
-
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Port $server_port;
-        proxy_set_header X-Forwarded-Scheme $scheme;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header Host $host;
-        proxy_set_header Early-Data $ssl_early_data;
-
-        # Websocket
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-    }
-
-    # If running nginx on a subdomain (eg. nextcloud.example.com) of a domain that already has an wildcard ssl certificate from certbot on this machine, 
-    # the <your-nc-domain> in the below lines should be replaced with just the domain (eg. example.com), not the subdomain. 
-    # In this case the subdomain should already be secured without additional actions
-    ssl_certificate /etc/letsencrypt/live/<your-nc-domain>/fullchain.pem;   # managed by certbot on host machine
-    ssl_certificate_key /etc/letsencrypt/live/<your-nc-domain>/privkey.pem; # managed by certbot on host machine
-
-    ssl_dhparam /etc/dhparam; # curl -L https://ssl-config.mozilla.org/ffdhe2048.txt -o /etc/dhparam
-
-    ssl_early_data on;
-    ssl_session_timeout 1d;
-    ssl_session_cache shared:SSL:10m;
+    http2 on;                     # for nginx v1.25.1+
+    #http3 on;                    # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
+    #quic_gso on;                 # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+ - broken for connections over wireguard tunnels
+    #quic_retry on;               # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
+    #http3_stream_buffer_size 1m; # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
+    client_body_buffer_size 1m;
 
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ecdh_curve x25519:x448:secp521r1:secp384r1:secp256r1;
+    ssl_ciphers ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:HTTPS:10m;
 
-    ssl_prefer_server_ciphers on;
-    ssl_conf_command Options PrioritizeChaCha;
-    ssl_ciphers TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256;
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        "" "";
+    }
+
+    upstream nextcloud {
+        keepalive 32;           # for nginx versions below v1.29.7
+        server 127.0.0.1:11000; # Adjust to match APACHE_PORT and APACHE_IP_BINDING. See https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md#adapting-the-sample-web-server-configurations-below
+    }
+
+    server {
+        listen 0.0.0.0:80 bind reuseport deferred so_keepalive=on; # for nginx versions below v1.29.7 - please remove "bind reuseport deferred so_keepalive=on" if another listener on the same IP:port already uses these options
+        listen [::]:80 bind reuseport deferred so_keepalive=on;    # for nginx versions below v1.29.7 - comment to disable IPv6 - please remove "bind reuseport deferred so_keepalive=on" if another listener on the same IP:port already uses these options
+
+        #listen 0.0.0.0:80 bind reuseport deferred multipath so_keepalive=on; # for nginx v1.29.7+ - please remove "bind reuseport deferred multipath so_keepalive=on" if another listener on the same IP:port already uses these options
+        #listen [::]:80 bind reuseport deferred multipath so_keepalive=on;    # for nginx v1.29.7+ - keep comment to disable IPv6 - please remove "bind reuseport deferred multipath so_keepalive=on" if another listener on the same IP:port already uses these options
+        if ($scheme = "http") {
+            return 301 https://$host$request_uri;
+        }
+        if ($http_x_forwarded_proto = "http") {
+            return 301 https://$host$request_uri;
+        }
+
+        listen 0.0.0.0:443 ssl bind reuseport deferred so_keepalive=on; # for nginx v1.25.1+ - please remove "bind reuseport deferred so_keepalive=on" if another listener on the same IP:port already uses these options
+        listen [::]:443 ssl bind reuseport deferred so_keepalive=on;    # for nginx v1.25.1+ - comment to disable IPv6 - please remove "bind reuseport deferred so_keepalive=on" if another listener on the same IP:port already uses these options
+
+        #listen 0.0.0.0:443 ssl bind reuseport deferred multipath so_keepalive=on; # for nginx v1.29.7+ - please remove "bind reuseport deferred multipath so_keepalive=on" if another listener on the same IP:port already uses these options
+        #listen [::]:443 ssl bind reuseport deferred multipath so_keepalive=on;    # for nginx v1.29.7+ - keep comment to disable IPv6 - please remove "bind reuseport deferred multipath so_keepalive=on" if another listener on the same IP:port already uses these options
+
+        #listen 0.0.0.0:443 ssl http2 bind reuseport deferred so_keepalive=on; # for nginx versions below v1.25.1 - please remove "bind reuseport deferred so_keepalive=on" if another listener on the same IP:port already uses these options
+        #listen [::]:443 ssl http2 bind reuseport deferred so_keepalive=on;    # for nginx versions below v1.25.1 - keep comment to disable IPv6 - please remove "bind reuseport deferred so_keepalive=on" if another listener on the same IP:port already uses these options
+
+        #listen 0.0.0.0:443 quic reuseport;        # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+ - please remove "reuseport" if another quic listener on the same IP:port already uses this option
+        #listen [::]:443 quic reuseport;           # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+ - keep comment to disable IPv6 - please remove "reuseport" if another quic listener on the same IP:port already uses this option
+        #add_header Alt-Svc 'h3=":443"; ma=86400'; # uncomment to enable HTTP/3 / QUIC - supported on nginx v1.25.0+
+
+        server_name <your-nc-domain>;
+
+        # If running nginx on a subdomain (eg. nextcloud.example.com) of a domain that already has a wildcard ssl certificate from certbot on this machine,
+        # the <your-nc-domain> in the below lines should be replaced with just the domain (eg. example.com), not the subdomain.
+        # In this case the subdomain should already be secured without additional actions
+        ssl_certificate /etc/letsencrypt/live/<your-nc-domain>/fullchain.pem;   # managed by certbot on host machine
+        ssl_certificate_key /etc/letsencrypt/live/<your-nc-domain>/privkey.pem; # managed by certbot on host machine
+
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_socket_keepalive on;
+        client_max_body_size 0;
+
+        # The default NEXTCLOUD_MAX_TIME value is 3600 seconds.
+        # By setting it 10 seconds higher than that, we make sure that always Nextcloud times out and not NGINX.
+        # If you increased NEXTCLOUD_MAX_TIME, increase the timeout below accordingly.
+        proxy_read_timeout 3610s;
+
+        location / {
+            proxy_pass http://nextcloud;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-For $remote_addr;
+
+            # Websockets
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+        }
+    }
 }
-
 ```
 
 ⚠️ **Please note:** look into [this](#adapting-the-sample-web-server-configurations-below) to adapt the above example configuration.
@@ -580,19 +603,16 @@ Note: this will cause that a non root user can bind privileged ports.
 
 Second, see these screenshots for a working config:
 
-<img width="672" height="982" alt="grafik" src="https://github.com/user-attachments/assets/e8914a63-58d2-4a47-ac51-981d21979495" />
+<img width="524" height="893" alt="image" src="https://github.com/user-attachments/assets/ac258378-de39-467d-bb5b-5fad2ad6e16e" />
 
-<img width="675" height="355" alt="grafik" src="https://github.com/user-attachments/assets/c4a006f5-f8c4-4898-9ea6-ec33ee7e5bd3" />
+<img width="532" height="205" alt="image" src="https://github.com/user-attachments/assets/c171d433-3b89-4bcd-a176-53d1c27c725a" />
 
-<img width="675" height="650" alt="grafik" src="https://github.com/user-attachments/assets/a4f80ecc-c539-4972-91ed-7b078c269dd1" />
+<img width="536" height="455" alt="image" src="https://github.com/user-attachments/assets/c5419262-a771-4801-9078-b503c1e52aa9" />
 
-<img width="675" height="570" alt="grafik" src="https://github.com/user-attachments/assets/8ea357c2-11d5-48af-abf7-f249bc677213" />
+<img width="527" height="471" alt="image" src="https://github.com/user-attachments/assets/130e94db-dcea-49c0-8cd2-355cb3b48f44" />
 
-
-- The "Enable compression by upstream, not recommended" Button can stay unchecked if you don't use Collabora. (https://github.com/CollaboraOnline/online/issues/10157) <br>
-- You may need to check the "Disable Crowdsec Appsec" Button if you use crowdsec and uploads or downloads fail. <br>
-- You may want to enable the "Disable Request/Response Buffering" Button since it could improve uploads and downloads. <br>
-- You can check the "Send noindex header and block some user agents" Button If you don't want your Nextcloud to be indexed by web crawlers like google. <br>
+- Enabling Crowdsec Appsec may break uploads and will enable buffering which could slow down uploads. <br>
+- You can check the "Send noindex header and block some user agents" button If you don't want your Nextcloud to be indexed by web crawlers like google. <br>
 - If you want/need you can also configure Auth Request/mTLS if needed or change the X-Frame-Options header if you want to embed Nextcloud.
 
 
@@ -606,7 +626,7 @@ Second, see these screenshots for a working config:
 
 <summary>click here to expand</summary>
 
-**Hint:** You may have a look at [this guide](https://github.com/nextcloud/all-in-one/discussions/588#discussioncomment-3040493) for a more complete but possibly oudated example.
+**Hint:** You may have a look at [this guide](https://github.com/nextcloud/all-in-one/discussions/588#discussioncomment-3040493) for a more complete but possibly outdated example.
 
 First, make sure the environmental variables `PUID` and `PGID` in the `compose.yaml` file for NPM are either unset or set to `0`. <br>
 If you need to change the GID/PID then please add `net.ipv4.ip_unprivileged_port_start=0` at the end of `/etc/sysctl.conf`. <br>
@@ -624,6 +644,9 @@ Second, see these screenshots for a working config:
 
 
 ```
+proxy_buffering off;
+proxy_request_buffering off;
+
 # The default NEXTCLOUD_MAX_TIME value is 3600 seconds. 
 # By setting proxy_read_timeout 10 seconds higher than that, we make sure that always Nextcloud times out and not NPM. 
 # If you increased NEXTCLOUD_MAX_TIME, increase the timeout below accordingly.
@@ -633,7 +656,6 @@ client_max_body_size 0; # This controls the maximum upload size, 0 means unlimit
 ```
 
 ⚠️ **Please note:** look into [this](#adapting-the-sample-web-server-configurations-below) to adapt the above example configuration.
-Also change `<you>@<your-mail-provider-domain>` to a mail address of yours.
 
 </details>
 

@@ -1,14 +1,26 @@
 # syntax=docker/dockerfile:latest
-FROM php:8.3.31-fpm-alpine3.23
+FROM php:8.4.27-fpm-alpine3.24
+
+ARG IGBINARY_VERSION=3.2.16
+ARG APCU_VERSION=5.1.28
+ARG MEMCACHED_VERSION=3.4.0
+ARG REDIS_VERSION=6.3.0
+ARG IMAGICK_VERSION=3.8.1
+ARG IMAP_VERSION=1.0.3
+ARG SMBCLIENT_VERSION=1.1.2
 
 ENV PHP_MEMORY_LIMIT=512M
-ENV PHP_UPLOAD_LIMIT=16G
+ENV PHP_UPLOAD_LIMIT=1G
 ENV PHP_MAX_TIME=3600
 ENV SOURCE_LOCATION=/usr/src/nextcloud
 ENV REDIS_DB_INDEX=0
 
 # AIO settings start # Do not remove or change this line!
-ENV NEXTCLOUD_VERSION=33.0.5
+ENV NEXTCLOUD_VERSION=35.0.2
+# Required to stop hadolint from complaining about potentially sensitive data in an environment variable. 
+# It might be a good idea to reconsider using and env var for this at one point,
+# but the actual value here is just a dummy and not relevant, so we silence the warning for now.
+# hadolint ignore=DL3064
 ENV AIO_TOKEN=123456
 ENV AIO_URL=localhost
 # AIO settings end # Do not remove or change this line!
@@ -16,7 +28,7 @@ ENV AIO_URL=localhost
 COPY --chmod=775 Containers/nextcloud/*.sh /
 COPY --chmod=774 Containers/nextcloud/upgrade.exclude /upgrade.exclude
 COPY Containers/nextcloud/config/*.php /
-COPY Containers/nextcloud/supervisord.conf /supervisord.conf
+COPY Containers/nextcloud/dinit.d/ /etc/dinit.d/
 
 # AIO cloning start # Do not remove or change this line!
 COPY app /usr/src/nextcloud/apps/nextcloud-aio
@@ -27,6 +39,7 @@ VOLUME /mnt/ncdata
 VOLUME /var/www/html
 
 # Custom: change id of www-data user as it needs to be the same like on old installations
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 # hadolint ignore=SC2086,DL3003
 RUN set -ex; \
     apk upgrade --no-cache -a; \
@@ -49,8 +62,6 @@ RUN set -ex; \
         icu-dev \
         imagemagick-dev \
         imagemagick-svg \
-        imagemagick-heic \
-        imagemagick-tiff \
         libevent-dev \
         libjpeg-turbo-dev \
         libmcrypt-dev \
@@ -59,13 +70,15 @@ RUN set -ex; \
         libwebp-dev \
         libxml2-dev \
         libzip-dev \
+        lz4-dev \
         openldap-dev \
         pcre-dev \
         postgresql-dev \
+        zstd-dev \
     ; \
     \
     docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp; \
-    docker-php-ext-configure ftp --with-openssl-dir=/usr; \
+    docker-php-ext-configure ftp --with-ftp-ssl; \
     docker-php-ext-configure ldap; \
     docker-php-ext-install -j "$(nproc)" \
         bcmath \
@@ -81,21 +94,41 @@ RUN set -ex; \
         zip \
     ; \
     \
-# pecl will claim success even if one install fails, so we need to perform each install separately
-    pecl install -o igbinary-3.2.16; \
-    pecl install APCu-5.1.28; \
-    pecl install -D 'enable-memcached-igbinary="yes"' memcached-3.4.0; \
-    pecl install -oD 'enable-redis-igbinary="yes" enable-redis-zstd="yes" enable-redis-lz4="yes"' redis-6.3.0; \
-   pecl install -o imagick-3.8.1; \
+# build PECL extensions from their GitHub release sources as pecl.php.net is not reliably reachable from CI
+    mkdir -p \
+        /usr/src/php/ext/igbinary \
+        /usr/src/php/ext/apcu \
+        /usr/src/php/ext/memcached \
+        /usr/src/php/ext/redis \
+        /usr/src/php/ext/imagick \
+    ; \
+    curl -fsSL --retry 5 "https://github.com/igbinary/igbinary/archive/refs/tags/$IGBINARY_VERSION.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/src/php/ext/igbinary; \
+    curl -fsSL --retry 5 "https://github.com/krakjoe/apcu/archive/refs/tags/v$APCU_VERSION.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/src/php/ext/apcu; \
+    curl -fsSL --retry 5 "https://github.com/php-memcached-dev/php-memcached/archive/refs/tags/v$MEMCACHED_VERSION.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/src/php/ext/memcached; \
+    curl -fsSL --retry 5 "https://github.com/phpredis/phpredis/archive/refs/tags/$REDIS_VERSION.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/src/php/ext/redis; \
+    curl -fsSL --retry 5 "https://github.com/Imagick/imagick/archive/refs/tags/$IMAGICK_VERSION.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/src/php/ext/imagick; \
+# the imagick version placeholder is only replaced when packaging for PECL
+    grep -q '@PACKAGE_VERSION@' /usr/src/php/ext/imagick/php_imagick.h; \
+    sed -i "s/@PACKAGE_VERSION@/$IMAGICK_VERSION/" /usr/src/php/ext/imagick/php_imagick.h; \
     \
-    docker-php-ext-enable \
+# igbinary needs to be installed first as memcached and redis are built against it
+    docker-php-ext-install -j "$(nproc)" \
         igbinary \
         apcu \
+    ; \
+    docker-php-ext-configure memcached --enable-memcached-igbinary; \
+    docker-php-ext-configure redis --enable-redis-igbinary --enable-redis-zstd --enable-redis-lz4 --with-liblz4; \
+    docker-php-ext-install -j "$(nproc)" \
         memcached \
         redis \
         imagick \
     ; \
-    rm -r /tmp/pear; \
+    docker-php-source delete; \
     \
     runDeps="$( \
         scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \
@@ -119,8 +152,10 @@ RUN set -ex; \
         echo 'opcache.interned_strings_buffer=64'; \
         echo 'opcache.save_comments=1'; \
         echo 'opcache.revalidate_freq=60'; \
-        echo 'opcache.jit=1255'; \
-        echo 'opcache.jit_buffer_size=128M'; \
+# JIT temporarily disabled, see https://github.com/nextcloud/docker/issues/2576
+# and https://github.com/nextcloud/all-in-one/discussions/8711
+        echo 'opcache.jit=disable'; \
+        echo 'opcache.jit_buffer_size=0'; \
     } > /usr/local/etc/php/conf.d/opcache-recommended.ini; \
     \
     { \
@@ -186,7 +221,7 @@ RUN set -ex; \
         ffmpeg \
         procps \
         samba-client \
-        supervisor \
+        dinit \
 #       libreoffice \
     ; \
     \
@@ -200,15 +235,26 @@ RUN set -ex; \
         libpq-dev \
     ; \
     \
-    docker-php-ext-configure imap --with-kerberos --with-imap-ssl; \
     docker-php-ext-install \
         bz2 \
-        imap \
         pgsql \
         ftp \
     ; \
-    pecl install smbclient; \
-    docker-php-ext-enable smbclient; \
+# imap was removed from PHP core in 8.4, so it needs to be installed from its PECL sources from now on
+    mkdir -p \
+        /usr/src/php/ext/imap \
+        /usr/src/php/ext/smbclient \
+    ; \
+    curl -fsSL --retry 5 "https://github.com/php/pecl-mail-imap/archive/refs/tags/$IMAP_VERSION.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/src/php/ext/imap; \
+    curl -fsSL --retry 5 "https://github.com/eduardok/libsmbclient-php/archive/refs/tags/$SMBCLIENT_VERSION.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/src/php/ext/smbclient; \
+    docker-php-ext-configure imap --with-kerberos --with-imap-ssl; \
+    docker-php-ext-install -j "$(nproc)" \
+        imap \
+        smbclient \
+    ; \
+    docker-php-source delete; \
     \
     runDeps="$( \
         scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \
@@ -219,13 +265,6 @@ RUN set -ex; \
     apk add --no-cache --virtual .nextcloud-phpext-rundeps $runDeps; \
     apk del .build-deps; \
     \
-    mkdir -p \
-    /var/log/supervisord \
-    /var/run/supervisord \
-    ; \
-    chmod 777 -R /var/log/supervisord; \
-    chmod 777 -R /var/run/supervisord; \
-    \
     apk add --no-cache \
         bash \
         netcat-openbsd \
@@ -234,14 +273,12 @@ RUN set -ex; \
         git \
         postgresql-client \
         tzdata \
-        sudo \
+        su-exec \
         grep \
         nodejs \
         bind-tools \
         imagemagick \
         imagemagick-svg \
-        imagemagick-heic \
-        imagemagick-tiff \
         coreutils; \
     \
     grep -q '^pm = dynamic' /usr/local/etc/php-fpm.d/www.conf; \
@@ -279,11 +316,13 @@ RUN set -ex; \
     chmod -R 777 /nc-updater
 
 # hadolint ignore=DL3002
-USER root
+USER root:root
+# The php-fpm base image sets STOPSIGNAL SIGQUIT, which dinit ignores, so the container would never stop gracefully
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/start.sh"]
-CMD ["/usr/bin/supervisord", "-c", "/supervisord.conf"]
+CMD ["dinit", "--system", "--container", "php-fpm", "cron", "taskprocessing-worker", "run-exec-commands", "is-nextcloud-online"]
 
-HEALTHCHECK CMD /healthcheck.sh
+HEALTHCHECK CMD ["/healthcheck.sh"]
 LABEL com.centurylinklabs.watchtower.enable="false" \
     wud.watch="false" \
     dockhand.update="false" \

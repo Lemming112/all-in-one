@@ -32,7 +32,7 @@ NEXTCLOUD_LOG_LEVEL="$(case "$AIO_LOG_LEVEL" in
 esac)"
 export NEXTCLOUD_LOG_LEVEL
 
-# Create cert bundle
+# Create cert bundle start # Do not remove or change this line!
 if env | grep -q NEXTCLOUD_TRUSTED_CERTIFICATES_; then
 
     # Enable debug mode
@@ -91,6 +91,8 @@ if env | grep -q NEXTCLOUD_TRUSTED_CERTIFICATES_; then
         set +x
     fi
 fi
+
+# Create cert bundle end # Do not remove or change this line!
 
 # Adjust DATABASE_TYPE to by Nextcloud supported value
 if [ "$DATABASE_TYPE" = postgres ]; then
@@ -274,10 +276,6 @@ if ! [ -f "$NEXTCLOUD_DATA_DIR/skip.update" ]; then
                         echo "Not disabling $app because the occ command to get its enabled state failed."
                     fi
                 done
-            fi
-
-            if [ "$((IMAGE_MAJOR - INSTALLED_MAJOR))" -eq 1 ]; then
-                php /var/www/html/occ config:system:delete app_install_overwrite
             fi
 
             php /var/www/html/occ app:update --all
@@ -473,7 +471,11 @@ EOF
             php /var/www/html/occ config:system:set versions_retention_obligation --value="auto, 30"
             php /var/www/html/occ config:system:set activity_expire_days --value="30" --type=integer
             php /var/www/html/occ config:system:set simpleSignUpLink.shown --type=bool --value=false
-            php /var/www/html/occ config:system:set share_folder --value="/Shared"
+            if [ -z "$NEXTCLOUD_SHARE_FOLDER" ]; then
+                php /var/www/html/occ config:system:set share_folder --value="/Shared"
+            else
+                php /var/www/html/occ config:system:set share_folder --value="$NEXTCLOUD_SHARE_FOLDER"
+            fi
 
             # Install some apps by default
             if [ -n "$STARTUP_APPS" ]; then
@@ -945,6 +947,8 @@ if [ "$TALK_ENABLED" = 'yes' ]; then
     elif [ "$SKIP_UPDATE" != 1 ]; then
         php /var/www/html/occ app:update spreed
     fi
+    # We auto-renew the certs via caddy so the outdated cert warning should not be displayed
+    php /var/www/html/occ config:app:set spreed certificate_expiration_days --type=integer --value="2"
     # Add turn server
     # shellcheck disable=SC2153
     if ! php /var/www/html/occ talk:turn:list --output="plain" | grep server | grep -q " $TURN_DOMAIN:$TALK_PORT"; then
@@ -1135,7 +1139,7 @@ if [ "$WHITEBOARD_ENABLED" = 'yes' ]; then
         php /var/www/html/occ app:update whiteboard
     fi
     php /var/www/html/occ config:app:set whiteboard collabBackendUrl --value="https://$NC_DOMAIN/whiteboard"
-    php /var/www/html/occ config:app:set whiteboard jwt_secret_key --value="$WHITEBOARD_SECRET"
+    php /var/www/html/occ config:app:set whiteboard jwt_secret_key --no-interaction --type=string --value="$WHITEBOARD_SECRET"
 else
     if [ "$REMOVE_DISABLED_APPS" = yes ] && [ -d "/var/www/html/custom_apps/whiteboard" ]; then
         php /var/www/html/occ app:remove whiteboard

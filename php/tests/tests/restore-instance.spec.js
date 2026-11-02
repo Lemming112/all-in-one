@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { logInToContainersPage } from './helpers.js';
 
 test('Restore instance', async ({ page: setupPage }) => {
   test.setTimeout(10 * 60 * 1000)
@@ -11,18 +12,7 @@ test('Restore instance', async ({ page: setupPage }) => {
     borgBackupPassword,
   } = JSON.parse(readFileSync('test_data.json'))
 
-  // Extract initial password
-  await setupPage.goto('./setup');
-  const password = await setupPage.locator('#initial-password').innerText()
-  const containersPagePromise = setupPage.waitForEvent('popup');
-  await setupPage.getByRole('link', { name: 'Open Nextcloud AIO login ↗' }).click();
-  const containersPage = await containersPagePromise;
-
-  // Log in and wait for redirect
-  await containersPage.locator('#master-password').click();
-  await containersPage.locator('#master-password').fill(password);
-  await containersPage.getByRole('button', { name: 'Log in' }).click();
-  await containersPage.waitForURL('./containers');
+  const containersPage = await logInToContainersPage(setupPage);
 
   // Reject example.com (requires enabled domain validation)
   await containersPage.locator('#domain').click();
@@ -32,7 +22,7 @@ test('Restore instance', async ({ page: setupPage }) => {
 
   // Reject invalid backup location
   await containersPage.locator('#borg_restore_host_location').click();
-  await containersPage.locator('#borg_restore_host_location').fill('/mnt/test/aio-incorrect-path');
+  await containersPage.locator('#borg_restore_host_location').fill('/tmp/test/aio-incorrect-path');
   await containersPage.locator('#borg_restore_password').click();
   await containersPage.locator('#borg_restore_password').fill(borgBackupPassword);
   await containersPage.getByRole('button', { name: 'Submit location and encryption password' }).click()
@@ -68,6 +58,8 @@ test('Restore instance', async ({ page: setupPage }) => {
 
   // Verify a successful backup restore
   await expect(containersPage.getByRole('main')).toContainText('Last restore successful!', { timeout: 3 * 60 * 1000 });
+  await containersPage.getByText('Click here to reveal all backup options').click();
+  await expect(containersPage.getByText('Reveal your encryption password for backups')).toBeVisible();
   await expect(containersPage.getByRole('main')).toContainText('⚠️ Container updates are available. Click on Stop containers and Start and update containers to update them. You should consider creating a backup first.');
   containersPage.once('dialog', dialog => {
     console.log(`Dialog message: ${dialog.message()}`)

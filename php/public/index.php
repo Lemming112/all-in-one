@@ -40,24 +40,6 @@ $container->set(Guard::class, function () use ($responseFactory) {
 });
 
 // Register Middleware To Be Executed On All Routes
-
-// Migrate from the old PHPSESSID cookie to the new __Host-Http-PHPSESSID cookie.
-// This is needed because the session cookie was renamed in a previous release. Without this,
-// users that were logged in before the update would be logged out after the container restarts.
-$wasAuthenticated = false;
-$oldSessionTimestamp = null;
-if (!isset($_COOKIE['__Host-Http-PHPSESSID']) && isset($_COOKIE['PHPSESSID'])) {
-    session_name('PHPSESSID');
-    if (session_start(['save_path' => $dataConst->GetSessionDirectory(), 'use_strict_mode' => true])) {
-        $wasAuthenticated = isset($_SESSION[\AIO\Auth\AuthManager::SESSION_KEY]) && $_SESSION[\AIO\Auth\AuthManager::SESSION_KEY] === true;
-        $oldSessionTimestamp = isset($_SESSION['date_time']) ? (int)$_SESSION['date_time'] : null;
-        // Do not destroy the old session: if the response carrying the new __Host-Http-PHPSESSID
-        // cookie is lost (e.g., due to a 502 during a mastercontainer update), the client can
-        // retry with the old PHPSESSID cookie and still be authenticated.
-        session_write_close();
-    }
-}
-
 session_start([
     "name" => "__Host-Http-PHPSESSID", // Set cookie prefix to prevent other pages from overwriting this cookie. See https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#cookie_prefixes
     "save_path" => $dataConst->GetSessionDirectory(), // Where to save the session files
@@ -71,17 +53,6 @@ session_start([
     "cookie_samesite" => "Lax", // Send the cookie with same-site requests and top-level cross-site navigations (e.g. redirect after token-based getlogin). "Strict" would block the session cookie on the redirect that follows a cross-site navigation, breaking the getlogin flow from Nextcloud's admin panel. See https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#samesitesamesite-value
 ]);
 
-if ($wasAuthenticated) {
-    if ($oldSessionTimestamp !== null) {
-        // Use MigrateAuthState to preserve the original login timestamp. This prevents the
-        // session deduplicator from running and keeps the old PHPSESSID session file alive,
-        // so the client can retry with the old cookie if the 502 response causes the new
-        // __Host-Http-PHPSESSID cookie to not be received.
-        $container->get(\AIO\Auth\AuthManager::class)->MigrateAuthState($oldSessionTimestamp);
-    } else {
-        $container->get(\AIO\Auth\AuthManager::class)->SetAuthState(true);
-    }
-}
 $app->add(Guard::class);
 
 // Create Twig
@@ -91,6 +62,31 @@ $twig->addExtension(new \AIO\Twig\CsrfExtension($container->get(Guard::class)));
 
 // Auth Middleware
 $app->add(new \AIO\Middleware\AuthMiddleware($container->get(\AIO\Auth\AuthManager::class)));
+
+// Check Sec-Fetch headers
+$app->add(function (Request $request, \Psr\Http\Server\RequestHandlerInterface $handler) use ($responseFactory) : Response {
+    // allow same-origin and none
+    if (in_array($request->getHeaderLine('Sec-Fetch-Site'), ['same-origin', 'none'], true)) {
+        return $handler->handle($request);
+    }
+
+    $isDocumentNavigation = $request->getMethod() === 'GET' && $request->getHeaderLine('Sec-Fetch-Mode') === 'navigate' && $request->getHeaderLine('Sec-Fetch-Dest') === 'document';
+
+    // allow cross-origin navigations to /api/auth/getlogin (with any query params)
+    if ($isDocumentNavigation && $request->getUri()->getPath() === '/api/auth/getlogin') {
+        return $handler->handle($request);
+    }
+
+    // allow cross-origin navigations to `/login`, if no query params are set
+    if ($isDocumentNavigation && $request->getUri()->getPath() === '/login' && $request->getUri()->getQuery() === '') {
+        return $handler->handle($request);
+    }
+
+    // else deny
+    $response = $responseFactory->createResponse(403);
+    $response->getBody()->write('Forbidden');
+    return $response;
+});
 
 // API
 $app->post('/api/docker/watchtower', AIO\Controller\DockerController::class . ':StartWatchtowerContainer');
@@ -111,6 +107,7 @@ $app->post('/api/auth/login', AIO\Controller\LoginController::class . ':TryLogin
 $app->get('/api/auth/getlogin', AIO\Controller\LoginController::class . ':GetTryLogin');
 $app->post('/api/auth/logout', AIO\Controller\LoginController::class . ':Logout');
 $app->post('/api/configuration', \AIO\Controller\ConfigurationController::class . ':SetConfig');
+$app->post('/api/desec/register', \AIO\Controller\DesecController::class . ':Register');
 
 // Views
 $app->get('/containers', function (Request $request, Response $response, array $args) use ($container) {
@@ -152,9 +149,7 @@ $app->get('/containers', function (Request $request, Response $response, array $
         'backup_times' => $configurationManager->getBackupTimes(),
         'current_channel' => $dockerActionManager->GetCurrentChannel(),
         'is_clamav_enabled' => $configurationManager->isClamavEnabled,
-        'is_onlyoffice_enabled' => $configurationManager->isOnlyofficeEnabled,
-        'is_eurooffice_enabled' => $configurationManager->isEuroofficeEnabled,
-        'is_collabora_enabled' => $configurationManager->isCollaboraEnabled,
+        'office_suite' => $configurationManager->getOfficeSuiteString(),
         'is_talk_enabled' => $configurationManager->isTalkEnabled,
         'borg_restore_password' => $configurationManager->borgRestorePassword,
         'daily_backup_time' => $configurationManager->getDailyBackupTime(),
@@ -183,16 +178,45 @@ $app->get('/containers', function (Request $request, Response $response, array $
         'community_containers' => $configurationManager->listAvailableCommunityContainers(),
         'community_containers_enabled' => $configurationManager->aioCommunityContainers,
         'bypass_container_update' => $bypass_container_update,
+        'desec_email' => $configurationManager->desecEmail,
+        'desec_password' => $configurationManager->desecPassword,
+        'is_desec_domain' => $configurationManager->isDesecDomain(),
+        'desec_account_registered' => $configurationManager->isDesecAccountRegistered(),
+        'desec_awaiting_verification' => $configurationManager->isDesecAwaitingVerification(),
     // Do not cache the page as it shows credentials
     ])->withHeader('Cache-Control', 'no-store');
 })->setName('profile');
+
+// Renders only the deSEC registration flow. The containers page opens this in a modal
+// iframe so the user can run the multi-step register -> verify -> domain process (adjusting
+// the inputs and re-submitting as needed) without reloading the whole page each time. Once a
+// deSEC domain is configured the view tells the parent window to reload (see desec-done.js).
+$app->get('/desec', function (Request $request, Response $response, array $args) use ($container) {
+    $view = Twig::fromRequest($request);
+    /** @var \AIO\Data\ConfigurationManager $configurationManager */
+    $configurationManager = $container->get(\AIO\Data\ConfigurationManager::class);
+    return $view->render($response, 'desec.twig', [
+        'domain' => $configurationManager->domain,
+        'desec_email' => $configurationManager->desecEmail,
+        'desec_password' => $configurationManager->desecPassword,
+        'desec_slug' => $configurationManager->desecSlug,
+        'is_desec_domain' => $configurationManager->isDesecDomain(),
+        'desec_account_registered' => $configurationManager->isDesecAccountRegistered(),
+        'desec_awaiting_verification' => $configurationManager->isDesecAwaitingVerification(),
+    // Do not cache the page as it shows credentials
+    ])->withHeader('Cache-Control', 'no-store');
+})->setName('desec');
 
 $app->get('/login', function (Request $request, Response $response, array $args) use ($container) {
     $view = Twig::fromRequest($request);
     /** @var \AIO\Docker\DockerActionManager $dockerActionManager */
     $dockerActionManager = $container->get(\AIO\Docker\DockerActionManager::class);
+    /** @var \AIO\Auth\AuthManager $authManager */
+    $authManager = $container->get(\AIO\Auth\AuthManager::class);
     return $view->render($response, 'login.twig', [
-        'is_login_allowed' => $dockerActionManager->isLoginAllowed(),
+        'is_authenticated' => $authManager->IsAuthenticated(),
+        'is_login_allowed' => $dockerActionManager->isLoginAllowed() || $authManager->IsLoginUnblockedForSession(),
+        'login_unblocked_notice' => $authManager->GetLoginUnblockedNotice(),
     ]);
 });
 
